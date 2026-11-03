@@ -376,6 +376,29 @@ POST /llm-pick-cancel  → 取消
 
 ## 开发
 
+### 更新推送（CI）
+
+仓库接了 GitHub Actions：**每次 push 到 `main`、每个 PR、以及手动触发**
+都会自动跑一遍，Node 20 和 22 各跑一次。
+
+工作流在 `.github/workflows/tests.yml`，做三件事：
+
+| 步骤 | 验什么 |
+|---|---|
+| 跑测试 | `node --test test/*.test.mjs`，142 条必须全绿 |
+| 检查插件入口 | `apply` 存在、`inject` 是数组且含 `tools` / `webServer` |
+| 检查 6 个工具 render | 每个工具的 `render` 都返回内容块数组 |
+
+后两步不是摆设，都是踩过坑加的：
+
+- **`inject` 必须是数组**（本插件是 `['tools','webServer']`），照抄别的插件的对象映射写法会误报
+- **`render` 返回裸字符串 → 宿主 `content.some is not a function`**，整次工具调用判失败、
+  模型一个字都拿不到。单测全绿也发现不了，必须单独验
+
+CI 里**没有装 DSH 运行时**，所以 `test/diary.test.mjs` 在找不到 `@deepseek-ai/dsh-tools`
+时会退回一个忠实的替身 `defineTool`（原样保留 spec，不偷偷修 `render` 返回值）。
+第一次推上去就因为这步整批失败，见提交 `676b599`。
+
 ### 跑测试
 
 ```bash
