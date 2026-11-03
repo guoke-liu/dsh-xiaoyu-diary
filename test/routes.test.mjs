@@ -320,7 +320,7 @@ test('配置错误：父目录都不存在时，报错并说清是哪一级', as
 // UI 上的大模型通道是主人自己按按钮、逐条点「记进日记」的 ——
 // 那是他认可的，必须标 owner；鱼自己整理的才标 xi。两条路不能互相冒充。
 
-test('作者：UI 的 quick-write 写进去是 xi（点按钮不等于主人写的字）', async () => {
+test('作者：主人手动挑的 quick-write 写进去是 owner', async () => {
   const env = await 造环境()
   try {
     const h = await 造宿主(env.root, env.vault)
@@ -331,9 +331,9 @@ test('作者：UI 的 quick-write 写进去是 xi（点按钮不等于主人写�
     assert.equal(r.status, 200, r.raw)
     const 条 = (await store.读某天(env.root, 'private', '2026-11-03'))[0]
     assert.ok(条, '应该写进去一条')
-    // 主人明确说过「我一条都没写」—— 按按钮不算写字，作者必须是鱼
-    assert.equal(条.作者, 'xi')
-    assert.notEqual(条.作者, 'owner', '不能冒充主人手记')
+    // ⭐ 2026-11-03 主人定稿：谁发起的筛选就算谁的日记。
+    //   自动筛选已关，这条路径只可能是主人手动点的，所以是 owner。
+    assert.equal(条.作者, 'owner')
   } finally { await env.清理() }
 })
 

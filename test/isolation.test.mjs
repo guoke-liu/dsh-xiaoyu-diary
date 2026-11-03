@@ -273,7 +273,7 @@ test('路由：不带来源的参数一律 400，不猜默认值', async () => {
     const 要来源的post = [
       `${PREFIX}/candidates/refresh`,
       `${PREFIX}/candidates/decide`,
-      `${PREFIX}/llm-pick-async`,
+      // llm-pick-async 2026-11-03 起已关闭（固定回 403），不参与这条断言
       `${PREFIX}/quick-write`,
     ]
     for (const p of 要来源的post) {
