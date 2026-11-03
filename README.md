@@ -1,6 +1,16 @@
 # 小鱼日记（@local/xiaoyu-diary）
 
+[![tests](https://github.com/guoke-liu/dsh-xiaoyu-diary/actions/workflows/tests.yml/badge.svg)](https://github.com/guoke-liu/dsh-xiaoyu-diary/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > 记住「不能忘的事」，并且能找回来。每天自动提取候选，由你在 UI 上挑哪些放进日记。
+
+仓库：<https://github.com/guoke-liu/dsh-xiaoyu-diary>
+
+```bash
+git clone https://github.com/guoke-liu/dsh-xiaoyu-diary.git
+cd dsh-xiaoyu-diary && ./install.sh --dry
+```
 
 ## 这是什么
 
