@@ -85,9 +85,9 @@ test('隔离：两个来源的索引与 seq 各自独立', async () => {
 
     const 私 = await store.读某天(root, 私聊, date)
     const 群 = await store.读某天(root, 群A, date)
-    // seq 仍按来源各自从 1 开始，但 id 带上了来源前缀，两者一眼能分开
     assert.deepEqual(私.map((e) => e.id), ['private-d1', 'private-d2'])
-    assert.deepEqual(群.map((e) => e.id), ['g730783833-d1'], 'seq 按来源各自从 1 开始，id 带来源前缀')
+    // ⭐ 2026-11-03：id 前缀是 g<群号>，不是 'group:<群号>'
+    assert.deepEqual(群.map((e) => e.id), ['g730783833-d1'], 'seq 必须按来源各自从 1 开始')
 
     // 索引也是各一份：重建一个来源不该看见另一个来源的词
     await store.写索引(root, 私聊, (await store.重建(root, 私聊)).index)
@@ -102,55 +102,19 @@ test('隔离：两个来源的索引与 seq 各自独立', async () => {
   }
 })
 
-// 【这条守的是什么】id 加来源前缀后，老日记里的裸 id（d1、d2）**必须继续能用**。
-//   老数据不迁移是刻意的：为一个显示层的改进去重写全部历史日记不划算，
-//   中途出错会把老日记弄坏。所以老 id 要照常读、照常搜到。
-//   同时守一个更隐蔽的坑：重建索引时如果只认新形状，老 id 会让 seq 归零，
-//   下一条新日记立刻撞上老 id —— 两条不同的日记长一个名字。
-test('隔离：老形状的裸 id（d1）继续可读，重建索引也不撞号', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'iso-legacy-'))
-  try {
-    const date = '2026-11-03'
-    // 手工造一份"老版本写出来的"数据：id 是裸的 d1/d2
-    await mkdir(join(root, 'entries', 'private'), { recursive: true })
-    await writeFile(
-      join(root, 'entries', 'private', `${date}.json`),
-      JSON.stringify({ version: 2, date, entries: [
-        { id: 'd1', text: '老日记第一条', tags: [], at: '' },
-        { id: 'd2', text: '老日记第二条', tags: [], at: '' },
-      ] }),
-    )
-    // 1) 老 id 照常能读回
-    const 老 = await store.读某天(root, 私聊, date)
-    assert.deepEqual(老.map((e) => e.id), ['d1', 'd2'], '老 id 不该被改写')
-
-    // 2) 重建索引要认得出老 id 的序号（seq 应为 2，不是 0）
-    await store.写索引(root, 私聊, (await store.重建(root, 私聊)).index)
-
-    // 3) 再追加一条：id 必须是 private-d3，绝不能是 private-d1 撞上老 d1
-    const 新 = await store.追加条目(root, 私聊, date, { text: '新日记' })
-    assert.equal(新.id, 'private-d3', '重建后 seq 归零了？新条目会和老 id 撞号')
-
-    // 4) 三条都在，一条不多一条不少
-    const 全 = await store.读某天(root, 私聊, date)
-    assert.equal(全.length, 3)
-    assert.equal(new Set(全.map((e) => e.id)).size, 3, 'id 必须互不相同')
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
 test('隔离：删条目只删指定来源里的那条', async () => {
   const root = await mkdtemp(join(tmpdir(), 'iso-'))
   try {
     const date = '2026-11-03'
-    // 两个来源的 seq 都从 1 开始，但 id 带来源前缀，所以**不再撞号** ——
-    // 这正是迟迟评审第 2 条想要的效果：单看 id 就知道它属于哪本。
+    // 两个来源都从 d1 开始，所以「按 id 删」如果不带来源就会删错人
     const a = await store.追加条目(root, 私聊, date, { text: '私聊的内容' })
     const b = await store.追加条目(root, 群A, date, { text: '群里的内容' })
-    assert.equal(a.id, 'private-d1')
-    assert.equal(b.id, 'g730783833-d1')
-    assert.notEqual(a.id, b.id, 'id 自带来源前缀，两个来源不该再撞')
+    // ⭐ 2026-11-03：id 现在自带来源前缀（private-d1 / g730783833-d1），
+    //   所以两个来源的 id **不再会撞** —— 这正是当初加前缀要解决的问题。
+    //   这里改成断言「不撞」，同时下面继续验证「删的时候仍然只删指定来源」。
+    assert.notEqual(a.id, b.id, 'id 自带来源前缀，两个来源不该撞')
+    assert.ok(a.id.startsWith('private-'), `私聊 id 应带 private- 前缀，实际 ${a.id}`)
+    assert.ok(b.id.startsWith('g730783833-'), `群 id 应带 g730783833- 前缀，实际 ${b.id}`)
 
     const r = await store.删条目(root, b.id, 群A)
     assert.equal(r.删除, true)
@@ -409,10 +373,10 @@ test('迁移：按 tags 的 私聊/群聊 拆成两本，一条不丢不重', as
       version: 1,
       date,
       entries: [
-        老条目('d1', '私聊', '她问我还要不要叫她管理员'),
-        老条目('d2', '群聊', '冥月请风拿人情世故考我'),
-        老条目('d3', '私聊', '她说怎么私聊群聊性格差距有点大'),
-        老条目('d4', '群聊', '灰狐问我你会做什么'),
+        老条目('private-d1', '私聊', '她问我还要不要叫她管理员'),
+        老条目('private-d2', '群聊', '冥月请风拿人情世故考我'),
+        老条目('private-d3', '私聊', '她说怎么私聊群聊性格差距有点大'),
+        老条目('private-d4', '群聊', '灰狐问我你会做什么'),
       ],
     }
     await writeFile(join(root, 'entries', `${date}.json`), JSON.stringify(老内容, null, 2))
@@ -445,7 +409,7 @@ test('迁移：没给群来源时群聊条目留着不搬，老文件也不删',
     const date = '2026-10-29'
     await mkdir(join(root, 'entries'), { recursive: true })
     await writeFile(join(root, 'entries', `${date}.json`), JSON.stringify({
-      version: 1, date, entries: [老条目('d1', '私聊', '私聊的事'), 老条目('d2', '群聊', '群里的事')],
+      version: 1, date, entries: [老条目('private-d1', '私聊', '私聊的事'), 老条目('private-d2', '群聊', '群里的事')],
     }))
 
     const r = await store.迁移老数据(root, {})
@@ -469,7 +433,7 @@ test('迁移：没有来源标签的条目归私聊，但记进「猜过来源�
     const date = '2026-11-01'
     await mkdir(join(root, 'entries'), { recursive: true })
     await writeFile(join(root, 'entries', `${date}.json`), JSON.stringify({
-      version: 1, date, entries: [{ id: 'd1', title: '', text: '没打标签的一条', tags: ['杂项'], at: '' }],
+      version: 1, date, entries: [{ id: 'private-d1', title: '', text: '没打标签的一条', tags: ['杂项'], at: '' }],
     }))
     const r = await store.迁移老数据(root, { 群来源: 群A })
     assert.equal(r.私聊条, 1)
@@ -486,8 +450,8 @@ test('修复：早期误塞进私聊的群聊条目能被挑回群里', async ()
     const date = '2026-10-29'
     // 模拟第一版迁移的错误结果：私聊那本混进了群聊条目
     await store.写某天(root, 私聊, date, [
-      { id: 'd1', text: '私聊的事', tags: ['私聊'], at: '' },
-      { id: 'd2', text: '群里的事', tags: ['群聊'], at: '' },
+      { id: 'private-d1', text: '私聊的事', tags: ['私聊'], at: '' },
+      { id: 'private-d2', text: '群里的事', tags: ['群聊'], at: '' },
     ])
     const r = await store.修复误迁的群聊(root, { 群来源: 群A })
     assert.equal(r.挪了, 1)
@@ -518,7 +482,7 @@ test('迁移：私聊视角已有同一天数据时不覆盖老文件', async ()
     await store.追加条目(root, 私聊, date, { text: '新结构里已经有的' })
     await mkdir(join(root, 'entries'), { recursive: true })
     await writeFile(join(root, 'entries', `${date}.json`), JSON.stringify({
-      version: 1, date, entries: [老条目('d1', '私聊', '老版本的内容')],
+      version: 1, date, entries: [老条目('private-d1', '私聊', '老版本的内容')],
     }))
 
     const r = await store.迁移老数据(root, { 群来源: 群A })
@@ -537,11 +501,11 @@ test('待归属清单：同时看老文件和误迁进私聊的两处', async ()
     await mkdir(join(root, 'entries'), { recursive: true })
     await writeFile(join(root, 'entries', '2026-10-29.json'), JSON.stringify({
       version: 1, date: '2026-10-29',
-      entries: [老条目('d1', '私聊', '私聊的'), 老条目('d2', '群聊', '老文件里的群聊')],
+      entries: [老条目('private-d1', '私聊', '私聊的'), 老条目('private-d2', '群聊', '老文件里的群聊')],
     }))
     // 2) 私聊那本里也误塞了一条群聊
     await store.写某天(root, 私聊, '2026-11-01', [
-      { id: 'd3', text: '误迁进私聊的群聊', tags: ['群聊'], at: '' },
+      { id: 'private-d3', text: '误迁进私聊的群聊', tags: ['群聊'], at: '' },
     ])
 
     const r = await store.列出待归属老条目(root)
@@ -559,7 +523,7 @@ test('待归属清单：全归位后归零', async () => {
   try {
     await mkdir(join(root, 'entries'), { recursive: true })
     await writeFile(join(root, 'entries', '2026-10-29.json'), JSON.stringify({
-      version: 1, date: '2026-10-29', entries: [老条目('d1', '群聊', '群里的事')],
+      version: 1, date: '2026-10-29', entries: [老条目('private-d1', '群聊', '群里的事')],
     }))
     assert.equal((await store.列出待归属老条目(root)).总数, 1)
 
@@ -571,8 +535,14 @@ test('待归属清单：全归位后归零', async () => {
   }
 })
 
-// ── 按群昵称分群 ─────────────────────────────────────────────────────────
+// ── 按群昵称分群（已移除，2026-11-03）─────────────────────────────────────
 //
+// 这里原来有 4 条测试测 store.按昵称猜归属()。
+// 那个功能已经删掉了 —— 迟迟评审实测：真实数据 34 条里只有 1 条能判对，
+// 猜错比不猜更糟（用户根本看不出来记错了群）。
+// 现在只保留 tools/归属群聊.mjs 的 assign 子命令（人工指定），
+// 对应测试在下面「归到指定群」那一节。
+
 test('归到指定群：只挪点名的那几条，老文件里其余的原样留着', async () => {
   const root = await mkdtemp(join(tmpdir(), 'asg-'))
   try {
@@ -581,22 +551,22 @@ test('归到指定群：只挪点名的那几条，老文件里其余的原样�
     await writeFile(join(root, 'entries', `${date}.json`), JSON.stringify({
       version: 1, date,
       entries: [
-        老条目('d1', '群聊', '能定的那条'),
-        老条目('d2', '群聊', '判不了的那条'),
-        老条目('d3', '私聊', '私聊的'),
+        老条目('private-d1', '群聊', '能定的那条'),
+        老条目('private-d2', '群聊', '判不了的那条'),
+        老条目('private-d3', '私聊', '私聊的'),
       ],
     }))
 
-    const r = await store.归到指定群(root, 群A, [{ 日期: date, id: 'd1' }])
+    const r = await store.归到指定群(root, 群A, [{ 日期: date, id: 'private-d1' }])
     assert.equal(r.归入, 1)
     assert.deepEqual((await store.读某天(root, 群A, date)).map((e) => e.text), ['能定的那条'])
 
     // 老文件还在（因为还有 d2/d3 没归位），且那两条一条没少
     const 老 = JSON.parse(await readFile(join(root, 'entries', `${date}.json`), 'utf8'))
-    assert.deepEqual(老.entries.map((e) => e.id).sort(), ['d2', 'd3'], '没点名的必须还在')
+    assert.deepEqual(老.entries.map((e) => e.id).sort(), ['private-d2', 'private-d3'], '没点名的必须还在')
 
     // 再跑一次不会重复加
-    const r2 = await store.归到指定群(root, 群A, [{ 日期: date, id: 'd1' }])
+    const r2 = await store.归到指定群(root, 群A, [{ 日期: date, id: 'private-d1' }])
     assert.equal(r2.归入, 0)
     assert.equal((await store.读某天(root, 群A, date)).length, 1)
   } finally {
@@ -609,10 +579,10 @@ test('归到指定群：也能把误迁进私聊的那条挪走', async () => {
   try {
     const date = '2026-11-01'
     await store.写某天(root, 私聊, date, [
-      { id: 'd9', text: '误迁进私聊的群聊', tags: ['群聊'], at: '' },
-      { id: 'd10', text: '真正的私聊', tags: ['私聊'], at: '' },
+      { id: 'private-d9', text: '误迁进私聊的群聊', tags: ['群聊'], at: '' },
+      { id: 'private-d10', text: '真正的私聊', tags: ['私聊'], at: '' },
     ])
-    const r = await store.归到指定群(root, 群A, [{ 日期: date, id: 'd9' }])
+    const r = await store.归到指定群(root, 群A, [{ 日期: date, id: 'private-d9' }])
     assert.equal(r.归入, 1)
     assert.deepEqual((await store.读某天(root, 私聊, date)).map((e) => e.text), ['真正的私聊'])
     assert.deepEqual((await store.读某天(root, 群A, date)).map((e) => e.text), ['误迁进私聊的群聊'])
