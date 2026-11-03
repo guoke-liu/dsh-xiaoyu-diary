@@ -308,8 +308,27 @@ async function 造宿主 () {
     }
   }
   // 最后退回裸包名（插件从自己的父目录链能解析到时才有效）
-  const mod = await import('@deepseek-ai/dsh-tools')
-  return mod.defineTool
+  //
+  // ⚠️ 必须包 try。CI 机器上根本没有 DSH 运行时，这句裸 import 会抛
+  //    ERR_MODULE_NOT_FOUND，把全部 8 个工具测试整批打死（2026-11-03 实测，
+  //    Node 20 容器里复现；本地因为装了 dsh 所以永远是绿的）。
+  //    找不到就退到替身：原样返回 spec —— **不要**替它修 render 返回值，
+  //    否则「render 返回裸字符串」这类真 bug 就测不出来了。
+  try {
+    const mod = await import('@deepseek-ai/dsh-tools')
+    if (typeof mod.defineTool === 'function') return mod.defineTool
+  } catch {
+    // 落到下面
+  }
+  return 替身DefineTool
+}
+
+/**
+ * 拿不到宿主 defineTool 时的忠实替身：原样返回 spec（不验证、不补全）。
+ * 这样 schema / render 的毛病仍然会暴露，测试不会因为环境缺失而假绿。
+ */
+function 替身DefineTool (spec) {
+  return spec
 }
 
 test('工具：5 个工具全部构造成功', async () => {
