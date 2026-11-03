@@ -85,8 +85,9 @@ test('隔离：两个来源的索引与 seq 各自独立', async () => {
 
     const 私 = await store.读某天(root, 私聊, date)
     const 群 = await store.读某天(root, 群A, date)
-    assert.deepEqual(私.map((e) => e.id), ['d1', 'd2'])
-    assert.deepEqual(群.map((e) => e.id), ['d1'], 'seq 必须按来源各自从 1 开始')
+    // seq 仍按来源各自从 1 开始，但 id 带上了来源前缀，两者一眼能分开
+    assert.deepEqual(私.map((e) => e.id), ['private-d1', 'private-d2'])
+    assert.deepEqual(群.map((e) => e.id), ['g730783833-d1'], 'seq 按来源各自从 1 开始，id 带来源前缀')
 
     // 索引也是各一份：重建一个来源不该看见另一个来源的词
     await store.写索引(root, 私聊, (await store.重建(root, 私聊)).index)
@@ -101,14 +102,55 @@ test('隔离：两个来源的索引与 seq 各自独立', async () => {
   }
 })
 
+// 【这条守的是什么】id 加来源前缀后，老日记里的裸 id（d1、d2）**必须继续能用**。
+//   老数据不迁移是刻意的：为一个显示层的改进去重写全部历史日记不划算，
+//   中途出错会把老日记弄坏。所以老 id 要照常读、照常搜到。
+//   同时守一个更隐蔽的坑：重建索引时如果只认新形状，老 id 会让 seq 归零，
+//   下一条新日记立刻撞上老 id —— 两条不同的日记长一个名字。
+test('隔离：老形状的裸 id（d1）继续可读，重建索引也不撞号', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'iso-legacy-'))
+  try {
+    const date = '2026-11-03'
+    // 手工造一份"老版本写出来的"数据：id 是裸的 d1/d2
+    await mkdir(join(root, 'entries', 'private'), { recursive: true })
+    await writeFile(
+      join(root, 'entries', 'private', `${date}.json`),
+      JSON.stringify({ version: 2, date, entries: [
+        { id: 'd1', text: '老日记第一条', tags: [], at: '' },
+        { id: 'd2', text: '老日记第二条', tags: [], at: '' },
+      ] }),
+    )
+    // 1) 老 id 照常能读回
+    const 老 = await store.读某天(root, 私聊, date)
+    assert.deepEqual(老.map((e) => e.id), ['d1', 'd2'], '老 id 不该被改写')
+
+    // 2) 重建索引要认得出老 id 的序号（seq 应为 2，不是 0）
+    await store.写索引(root, 私聊, (await store.重建(root, 私聊)).index)
+
+    // 3) 再追加一条：id 必须是 private-d3，绝不能是 private-d1 撞上老 d1
+    const 新 = await store.追加条目(root, 私聊, date, { text: '新日记' })
+    assert.equal(新.id, 'private-d3', '重建后 seq 归零了？新条目会和老 id 撞号')
+
+    // 4) 三条都在，一条不多一条不少
+    const 全 = await store.读某天(root, 私聊, date)
+    assert.equal(全.length, 3)
+    assert.equal(new Set(全.map((e) => e.id)).size, 3, 'id 必须互不相同')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('隔离：删条目只删指定来源里的那条', async () => {
   const root = await mkdtemp(join(tmpdir(), 'iso-'))
   try {
     const date = '2026-11-03'
-    // 两个来源都从 d1 开始，所以「按 id 删」如果不带来源就会删错人
+    // 两个来源的 seq 都从 1 开始，但 id 带来源前缀，所以**不再撞号** ——
+    // 这正是迟迟评审第 2 条想要的效果：单看 id 就知道它属于哪本。
     const a = await store.追加条目(root, 私聊, date, { text: '私聊的内容' })
     const b = await store.追加条目(root, 群A, date, { text: '群里的内容' })
-    assert.equal(a.id, b.id, '前提：两个来源的 id 会撞（这正是风险所在）')
+    assert.equal(a.id, 'private-d1')
+    assert.equal(b.id, 'g730783833-d1')
+    assert.notEqual(a.id, b.id, 'id 自带来源前缀，两个来源不该再撞')
 
     const r = await store.删条目(root, b.id, 群A)
     assert.equal(r.删除, true)
@@ -531,49 +573,6 @@ test('待归属清单：全归位后归零', async () => {
 
 // ── 按群昵称分群 ─────────────────────────────────────────────────────────
 //
-// ⚠️ 这个功能的分母很大、分子很小，测试必须钉住「不确定就不硬塞」这一条：
-//    真实数据 34 条里只有 1 条能判，如果实现把低分也当成答案，
-//    32 条会被塞进错误的群，而且用户看不出来。
-
-test('昵称分群：只有一个群命中才判「能定」', () => {
-  const 待 = [{ 日期: '2026-10-29', id: 'd1', text: '冥月请风拿人情世故考我', tags: ['群聊', '冥月请风', '人情世故'] }]
-  const r = store.按昵称猜归属(待, {
-    [群A]: ['冥月请风', '灰狐', '龙娘'],
-    [群B]: ['借老婆下局还', '远航'],
-  })
-  assert.equal(r[0].判定, '能定')
-  assert.equal(r[0].归属, 群A)
-  assert.match(r[0].依据, /冥月请风/)
-})
-
-test('昵称分群：两个群都有命中时判「判不了」，不硬塞', () => {
-  const 待 = [{ 日期: '2026-11-01', id: 'd2', text: '过客家的小鱼儿说的话', tags: ['群聊', '过客家的小鱼儿'] }]
-  const r = store.按昵称猜归属(待, {
-    [群A]: ['过客家的小鱼儿'],
-    [群B]: ['过客家的小鱼儿'], // 这个名字两个群都有
-  })
-  assert.equal(r[0].判定, '判不了')
-  assert.equal(r[0].归属, '', '判不了时绝不能给归属')
-  assert.match(r[0].依据, /多个群/)
-})
-
-test('昵称分群：人名都查不到时判「无依据」', () => {
-  const 待 = [{ 日期: '2026-10-30', id: 'd3', text: '灰狐问我', tags: ['群聊', '灰狐', '问答'] }]
-  const r = store.按昵称猜归属(待, {
-    [群A]: ['龙娘', '迟迟'],
-    [群B]: ['远航'],
-  })
-  assert.equal(r[0].判定, '无依据')
-  assert.equal(r[0].归属, '')
-})
-
-test('昵称分群：「群聊」标签本身不算人名，不会被误判成命中', () => {
-  const 待 = [{ 日期: '2026-10-30', id: 'd4', text: 'x', tags: ['群聊', '-'] }]
-  // 万一某个群真有个成员叫「群聊」或「-」，也不该靠这个判定
-  const r = store.按昵称猜归属(待, { [群A]: ['群聊', '-'] })
-  assert.equal(r[0].判定, '无依据')
-})
-
 test('归到指定群：只挪点名的那几条，老文件里其余的原样留着', async () => {
   const root = await mkdtemp(join(tmpdir(), 'asg-'))
   try {

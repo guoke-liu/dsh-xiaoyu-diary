@@ -23,13 +23,11 @@
 
 import path from 'node:path'
 import os from 'node:os'
-import { cp, readdir, readFile } from 'node:fs/promises'
+import { cp } from 'node:fs/promises'
 import {
-  列出待归属老条目, 修复误迁的群聊, 迁移老数据, 按昵称猜归属, 归到指定群,
+  列出待归属老条目, 修复误迁的群聊, 迁移老数据, 归到指定群,
 } from '../lib/store.js'
 import { 校验来源, 来源标签, 私聊 } from '../lib/source.js'
-import { 列出来源, 探测仓库 } from '../lib/vault.js'
-import path2 from 'node:path'
 
 /** 从 argv 里取 --root=/path。 */
 function 取根 () {
@@ -45,40 +43,6 @@ function 取参数 () {
 
 function 有开关 (名) {
   return process.argv.includes(名)
-}
-
-/**
- * 扫每个群的成员昵称（从记忆仓库群聊记录的行里解析）。
- *
- * 为什么要扫全部记录而不是只看最新一天：来群里说过话、但最近没说话的人都算成员，
- * 只看一天会漏掉一大批老成员。老日记里的人恰恰多是"以前来说过话"的。
- *
- * @returns {Promise<Object<string, string[]>>} 来源 key → 成员昵称数组
- */
-async function 取群成员 (vaultDir) {
-  const 行格式 = /^\[(\d{2}):(\d{2}):(\d{2})\]\s*([^(]*)\(([^)]+)\):\s*(.*)$/
-  const 出 = {}
-  let 来源们 = []
-  try {
-    来源们 = await 列出来源(vaultDir, await 探测仓库(() => {}))
-  } catch { return 出 }
-  for (const s of 来源们) {
-    if (!s.群号) continue
-    const 目录 = path2.join(vaultDir, 'chat', 'group', s.群号)
-    let 文件们 = []
-    try { 文件们 = await readdir(目录) } catch { continue }
-    const 集 = new Set()
-    for (const f of 文件们.filter((x) => x.endsWith('.txt'))) {
-      let raw = ''
-      try { raw = await readFile(path2.join(目录, f), 'utf8') } catch { continue }
-      for (const line of raw.split(/\r?\n/)) {
-        const m = 行格式.exec(line)
-        if (m && m[4].trim()) 集.add(m[4].trim())
-      }
-    }
-    出[s.来源] = [...集]
-  }
-  return 出
 }
 
 async function 主 () {
@@ -106,53 +70,6 @@ async function 主 () {
       }
     }
     console.log('\n挑一个群，然后：node tools/归属群聊.mjs assign group:<群号>')
-    return
-  }
-
-  if (命令 === 'bynick') {
-    // 按群昵称检索来分：先查每个群的成员名单，再看老条目的 tag 命中哪个群
-    const vault = (process.argv.find((x) => x.startsWith('--vault=')) || '').slice('--vault='.length)
-      || process.env.VAULT_HOME || path.join(os.homedir(), '.dsh', 'memory-vault')
-    const 待 = await 列出待归属老条目(root)
-    if (待.总数 === 0) { console.log('✅ 没有待归属的条目。'); return }
-    const 群成员 = await 取群成员(vault)
-    const 群们 = Object.keys(群成员)
-    if (群们.length === 0) {
-      console.error(`❌ 在 ${vault} 里没扫到任何群的成员名单，无法按昵称分。`)
-      process.exitCode = 1
-      return
-    }
-    const 结果 = 按昵称猜归属(待.待归属, 群成员)
-    const 能定 = 结果.filter((x) => x.判定 === '能定')
-    const 判不了 = 结果.filter((x) => x.判定 === '判不了')
-    const 无依据 = 结果.filter((x) => x.判定 === '无依据')
-    console.log(`共 ${结果.length} 条待归属。群成员名单：${群们.map((k) => `${来源标签(k)}(${群成员[k].length} 人)`).join('、')}`)
-    console.log(`\n【能定】${能定.length} 条`)
-    for (const x of 能定) console.log(`  ${x.日期} ${x.id}  → ${来源标签(x.归属)}  （${x.依据}）`)
-    console.log(`\n【判不了】${判不了.length} 条（多个群都命中）`)
-    for (const x of 判不了) console.log(`  ${x.日期} ${x.id}  ${x.依据}`)
-    console.log(`\n【无依据】${无依据.length} 条（人名都查不到，多半是已退群改名的）`)
-
-    if (能定.length === 0) {
-      console.log('\n没有任何一条能可靠判定归属。按昵称分这条路走不通，需要人工指定。')
-      return
-    }
-    const dry = 有开关('--dry')
-    console.log(`\n${dry ? '预览' : '执行'}：把【能定】的 ${能定.length} 条写进各自该去的群`)
-    if (dry) return
-
-    // 按来源分组写盘
-    const 分好 = new Map()
-    for (const x of 能定) {
-      if (!分好.has(x.归属)) 分好.set(x.归属, [])
-      分好.get(x.归属).push(x)
-    }
-    for (const [key, 们] of 分好) {
-      const r = await 归到指定群(root, key, 们.map((x) => ({ 日期: x.日期, id: x.id })))
-      console.log(`  ${来源标签(key)}：归入 ${r.归入} 条`)
-    }
-    const 剩 = await 列出待归属老条目(root)
-    console.log(`\n完成。剩余待归属 ${剩.总数} 条（判不了的仍然留给你定）。`)
     return
   }
 

@@ -74,13 +74,16 @@ test('鉴权：没有有效 cookie 时，路由回 401 且不吐任何数据', a
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-test('鉴权：所有 15 条路由都过闸门（漏一条就是后门）', async () => {
+test('鉴权：所有 16 条路由都过闸门（漏一条就是后门）', async () => {
   const root = await 造目录()
   try {
     const { 调, 路由表 } = await 造宿主(root, { 放行: false })
     // PREFIX 下的每条路由都必须回 401 —— 不允许有例外
     const 路由们 = [...路由表.keys()].filter((p) => p.startsWith(PREFIX))
-    assert.ok(路由们.length >= 15, `应有 15 条路由，实际 ${路由们.length}`)
+    assert.ok(路由们.length >= 16, `应有 16 条路由，实际 ${路由们.length}`)
+    // 新加的 /version 尤其要盯住：它会把「仓库有哪些版本」吐出去，
+    // 而且会代替所有人去访问 GitHub。裸奔的话等于给外人一个免费代理。
+    assert.ok(路由们.includes(`${PREFIX}/version`), '版本路由必须在闸门后面')
     for (const p of 路由们) {
       const r = await 调(p)
       assert.equal(r.status, 401, `${p} 没走鉴权闸门，回的是 ${r.status}`)

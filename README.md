@@ -1,16 +1,6 @@
 # 小鱼日记（@local/xiaoyu-diary）
 
-[![tests](https://github.com/guoke-liu/dsh-xiaoyu-diary/actions/workflows/tests.yml/badge.svg)](https://github.com/guoke-liu/dsh-xiaoyu-diary/actions/workflows/tests.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
 > 记住「不能忘的事」，并且能找回来。每天自动提取候选，由你在 UI 上挑哪些放进日记。
-
-仓库：<https://github.com/guoke-liu/dsh-xiaoyu-diary>
-
-```bash
-git clone https://github.com/guoke-liu/dsh-xiaoyu-diary.git
-cd dsh-xiaoyu-diary && ./install.sh --dry
-```
 
 ## 这是什么
 
@@ -38,61 +28,47 @@ cd dsh-xiaoyu-diary && ./install.sh --dry
 
 插件包根目录是 `plugin/`（含 `package.json` 的那一层），不是外层目录。
 
-### 安装
+### 本机（web profile）
 
-**推荐直接跑安装脚本**，它会自动找 profile、加依赖、装好并验收：
-
-```bash
-./install.sh              # 只有一个 profile 时自动选
-./install.sh <profile名>  # 有多个时指定一个
-./install.sh --dry        # 只想看看会做什么
-```
-
-脚本做的事就是下面这段手工步骤，不想用脚本可以照着做：
+本机 profile 的 `package.json` 里加一行依赖：
 
 ```jsonc
-// ~/.dsh/profiles/<profile>/package.json
+// /root/projects/.dsh/profiles/web/package.json
 {
   "dependencies": {
-    "@local/xiaoyu-diary": "link:/path/to/xiaoyu-diary"
-  },
-  "dsh": {
-    "profile": {
-      "bundles": ["@local/xiaoyu-diary"]
-    }
+    "@local/xiaoyu-diary": "link:../../dshbox/dshbox-plugins/xiaoyu-diary/plugin"
   }
 }
 ```
 
-`link:` 必须指向**含 `package.json` 的那一层**（也就是本目录），不能指外层包装目录。
+`link:` 必须指向含 `package.json` 的 `plugin/` 层，不能指外层。本机插件实体固定在
+`/root/projects/.dsh/dshbox/dshbox-plugins/xiaoyu-diary/plugin`，相对路径从
+`.dsh/profiles/web/` 算起是 `../../dshbox/...`。
 
-然后安装依赖：
+然后安装：
 
 ```bash
-cd ~/.dsh/profiles/<profile>
-dsh plugin --profile <profile> install
+cd /root/projects/.dsh/profiles/web
+corepack pnpm install --prefer-offline
 ```
 
-⚠️ **不要手工往 `cordis.patch.yml` 加本插件条目** —— 本包自带
-`dsh.bundle.patch`，安装时会自动应用，手加会导致**重复注册**。
+### 云端（feiyu profile）
 
-### 远程 / 服务器部署
-
-把本仓库放到服务器上任意位置，profile 的 `package.json` 用**绝对路径** link 过去
-（指向包含 `package.json` 的那一层，也就是本目录）：
+云端用绝对路径 link，路径指向云端 clone 的仓库位置：
 
 ```jsonc
+// 云端 profile 的 package.json
 {
   "dependencies": {
-    "@local/xiaoyu-diary": "link:/path/to/xiaoyu-diary"
+    "@local/xiaoyu-diary": "link:/opt/dsh-plugins/xiaoyu-diary/plugin"
   }
 }
 ```
 
-改完插件代码后要重启 DSH 服务才生效：
+云端改完插件代码后要重启服务才生效：
 
 ```bash
-sudo systemctl restart <你的 dsh 服务名>
+systemctl restart dsh-feiyu.service
 ```
 
 ## 使用
@@ -215,33 +191,20 @@ sudo systemctl restart <你的 dsh 服务名>
 试过用成员昵称匹配，实测 **34 条里只能判对 1 条**，因为很多人早退群改名了
 （灰狐、ds深潜、游龙潜吟、路西法… 现在都查无此人）。
 
-所以这一步**要人来定**。自带的命令行工具有两条路子：
+所以这一步**只能人指定**，没有「自动猜」这条路：
 
 ```bash
 cd <插件根目录>
 
-# 路子一：按群昵称自动分（能判的自动归，判不了的留着）
-node tools/归属群聊.mjs bynick --dry     # 先看
-node tools/归属群聊.mjs bynick           # 执行
-
-# 路子二：人工指定（一条命令全归到一个群）
-node tools/归属群聊.mjs list             # 看有哪些在等归属
-node tools/归属群聊.mjs assign group:<群号> --dry
-node tools/归属群聊.mjs assign group:<群号>
+node tools/归属群聊.mjs list                       # 看有哪些在等归属
+node tools/归属群聊.mjs assign group:<群号> --dry    # 先看会动什么
+node tools/归属群聊.mjs assign group:<群号>         # 执行
 ```
 
-`bynick` 的做法：拿老条目 `tags` 里的人名，去每个群**当前**的成员名单里查。
-结果分三档，**只有「能定」的才会被自动归位**：
-
-| 判定 | 含义 | 怎么处理 |
-|---|---|---|
-| 能定 | 只有一个群命中 | ✅ 自动归到这个群 |
-| 判不了 | 两个以上群都有命中 | ⚠️ 留着，报给你 |
-| 无依据 | 人名在所有群都查不到 | ⚠️ 留着，报给你 |
-
-⚠️ **实测效果很有限**：真实数据 34 条里只判对了 **1 条**。原因是老日记里的人是
-**当时**的，很多人后来退群改名了（灰狐、ds深潜、游龙潜吟、路西法、梁圣、放假dog、廾匸 都查无此人）。
-所以 `bynick` 通常只能自动归个位数，剩下的还是要用 `assign` 指定。
+> **为什么不做自动按昵称分**：实测 34 条里只判对 1 条，等于没判。
+> 一个「看起来会自动」的按钮比没有这个按钮更糟 —— 它会让人以为已经分好了，
+> 结果 33 条还在原地（或者更糟：被塞进错误的群）。
+> 所以这个子命令被删掉了，只留明确指定。
 
 工具做的事：
 
@@ -376,36 +339,14 @@ POST /llm-pick-cancel  → 取消
 
 ## 开发
 
-### 更新推送（CI）
-
-仓库接了 GitHub Actions：**每次 push 到 `main`、每个 PR、以及手动触发**
-都会自动跑一遍，Node 20 和 22 各跑一次。
-
-工作流在 `.github/workflows/tests.yml`，做三件事：
-
-| 步骤 | 验什么 |
-|---|---|
-| 跑测试 | `node --test test/*.test.mjs`，142 条必须全绿 |
-| 检查插件入口 | `apply` 存在、`inject` 是数组且含 `tools` / `webServer` |
-| 检查 6 个工具 render | 每个工具的 `render` 都返回内容块数组 |
-
-后两步不是摆设，都是踩过坑加的：
-
-- **`inject` 必须是数组**（本插件是 `['tools','webServer']`），照抄别的插件的对象映射写法会误报
-- **`render` 返回裸字符串 → 宿主 `content.some is not a function`**，整次工具调用判失败、
-  模型一个字都拿不到。单测全绿也发现不了，必须单独验
-
-CI 里**没有装 DSH 运行时**，所以 `test/diary.test.mjs` 在找不到 `@deepseek-ai/dsh-tools`
-时会退回一个忠实的替身 `defineTool`（原样保留 spec，不偷偷修 `render` 返回值）。
-第一次推上去就因为这步整批失败，见提交 `676b599`。
-
 ### 跑测试
 
 ```bash
-node --test test/*.test.mjs      # 必须带 glob，node --test test/ 会找不到模块
+cd /root/projects/.dsh/dshbox/dshbox-plugins/xiaoyu-diary/plugin
+node --test test/*.test.mjs
 ```
 
-九个测试文件（共 142 条）：
+七个测试文件（共 119 条）：
 
 | 文件 | 测什么 |
 |---|---|
@@ -416,8 +357,6 @@ node --test test/*.test.mjs      # 必须带 glob，node --test test/ 会找不�
 | `test/async.test.mjs` | 后台挑选任务：jobId、防重复、轮询、取消 |
 | `test/view.test.mjs` | 书本翻页纯函数 + client.js 副本一致性 |
 | `test/isolation.test.mjs` | **来源隔离**：私聊与各群互不可见（含老数据迁移） |
-| `test/base.test.mjs` | 前端接口前缀要跟着部署路径走（子路径部署不能丢前缀） |
-| `test/auth.test.mjs` | **鉴权**：15 条路由逐条验，没有有效 cookie 一律 401 |
 
 `test/isolation.test.mjs` 值得单独说一句：它的每一条断言都设计成
 **「合并了就必然失败」**。「完全分开」这个性质一旦回归，界面照样能用、
@@ -455,7 +394,17 @@ curl -s http://127.0.0.1:3080/local/xiaoyu-diary/ping
 - **记忆仓库接口可能静默失效**：三档降级能兜住，但如果仓库既没装、文件布局也变了，当天就没有候选——表现为「那天没聊什么」，需要看日志里的 `[vault]` 提示确认。
 - **任务进度只存在于内存**：dsh 重启后未完成的任务丢失，前端轮询会收到 404。这是刻意的取舍（为一个几分钟的任务做持久化不值得），但用户重启后会看到「任务不存在或已过期」。
 
-## 附一：手机访问（可选）
+## 附：关于作者的私有工具
+
+本仓库**不包含**作者的 QQ 通知脚本（`tools/notify*.mjs`、`tools/notify.sh`）。
+那几个脚本里写死了作者的收件人 QQ 号和服务器地址，属于私有部署的一部分，
+不适合放进公开仓库。
+
+需要定时/事件推送到手机的话，任意一个能发 HTTP 请求的渠道都能接：
+钉钉/企业微信/飞书机器人、Bark、ntfy、Telegram Bot 等，
+在你们自己的服务端调一下就行，跟本插件的日记功能完全解耦。
+
+## 附二：手机访问（可选）
 
 云端 DSH 默认只监听 `127.0.0.1`，手机上打不开。想在外面用：
 反向代理一条路径 + `--trusted-host`。
@@ -473,13 +422,14 @@ location /dsh/ {
 ```
 
 ```ini
-# 你的 dsh service 单元
-ExecStart=/usr/bin/dsh --profile <profile> --host 127.0.0.1 --port <port> --trusted-host <公网IP>:80 --no-open
+# dsh-feiyu.service
+ExecStart=/usr/bin/dsh --profile feiyu --host 127.0.0.1 --port 6600 --trusted-host <公网IP>:80 --no-open
+ExecStartPost=-/bin/bash .../tools/push-link.sh   # 重启后自动把新链接推到 QQ
 ```
 
 访问地址：`http://<公网IP>/dsh/?token=<dsh 打印的 token>`
 
-**四个必须知道的坑**，简要说：
+**四个必须知道的坑**写在交接文档「七之六」里，简要说：
 `$http_host` 不能用 `$host`、`auth_basic off` 要显式写、`ExecStartPost` 时机早于 DSH 就绪、
 curl 测链接要带 cookie jar（否则会看到假 401）。
 

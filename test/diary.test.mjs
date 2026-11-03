@@ -85,8 +85,9 @@ test('存储：追加后能读回，id 自增', async () => {
   try {
     const a = await store.追加条目(root, 'private', '2026-11-02', { text: '第一件事', tags: [] })
     const b = await store.追加条目(root, 'private', '2026-11-02', { text: '第二件事', tags: [] })
-    assert.equal(a.id, 'd1')
-    assert.equal(b.id, 'd2')
+    // id 自带来源前缀（迟迟评审第 2 条）：单看 id 就知道是私聊的
+    assert.equal(a.id, 'private-d1')
+    assert.equal(b.id, 'private-d2')
     const back = await store.读某天(root, 'private', '2026-11-02')
     assert.equal(back.length, 2)
     assert.equal(back[1].text, '第二件事')
@@ -274,29 +275,13 @@ test('提取：渲染带提醒语', () => {
 // ── 工具层完整链（AGENTS.md §3.6.2 四步）────────────────────────────────
 
 /**
- * 找不到真宿主时的替身 defineTool。
- *
- * 【为什么需要】CI（GitHub Actions）里没有装 DSH 运行时，`@deepseek-ai/dsh-tools`
- * 解析不到。而下面这些测试验的主要是**我们自己写的 render 契约** ——
- * 「render 必须返回内容块数组」是我们代码的责任，不是宿主的。
- * 拿不到宿主就整批失败，那是测试不可移植，不是插件坏了。
- *
- * 替身要**忠实于宿主的可观察行为**（见 AGENTS.md §3.6.2）：
- *   · 原样保留 spec 的 name / description / parameters / execute / output
- *   · 不偷偷修 render 返回值，否则就测不出「render 返回裸字符串」这类回归
- * 真正接宿主的那一步由 DSH 运行时负责，CI 另有一步专门验入口形状。
- */
-function 替身DefineTool (spec) {
-  return spec
-}
-
-/**
- * 找 dsh 运行时里的 dsh-tools；找不到就退回替身。
+ * 找 dsh 运行时里的 dsh-tools。
  *
  * 不能写死路径：本机是 /opt/dshapp/runtime/node_modules，云端全局装在
- * /usr/lib/node_modules，CI 上两个都没有。
+ * /usr/lib/node_modules。写死会让测试在另一台机器上整批失败 ——
+ * 那是测试不可移植，不是插件坏了（云端实测踩过一次）。
  *
- * @returns {Promise<Function>} defineTool（真宿主优先，拿不到用替身）
+ * 顺序：先按常见安装点找，再退回 require.resolve 让 node 自己找。
  */
 async function 造宿主 () {
   const { createRequire } = await import('node:module')
@@ -322,14 +307,9 @@ async function 造宿主 () {
       if (typeof mod.defineTool === 'function') return mod.defineTool
     }
   }
-  // 再退回裸包名（插件从自己的父目录链能解析到时才有效）
-  try {
-    const mod = await import('@deepseek-ai/dsh-tools')
-    if (typeof mod.defineTool === 'function') return mod.defineTool
-  } catch {
-    // CI 上没有宿主，落空是正常的 —— 下面用替身
-  }
-  return 替身DefineTool
+  // 最后退回裸包名（插件从自己的父目录链能解析到时才有效）
+  const mod = await import('@deepseek-ai/dsh-tools')
+  return mod.defineTool
 }
 
 test('工具：5 个工具全部构造成功', async () => {
@@ -367,7 +347,7 @@ test('工具：写入 → 检索 端到端，render 返回内容块数组', asyn
     })
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]))
 
-    const w = await byName.xiaoyu_diary_write.execute({ text: '今天和主人约好明天去爬山', tags: ['约定'] })
+    const w = await byName.xiaoyu_diary_write.execute({ 来源: 'private', text: '今天和主人约好明天去爬山', tags: ['约定'] })
     assert.equal(w.ok, true)
     // render 必须是内容块数组
     const blocks = byName.xiaoyu_diary_write.output.render({}, w)
@@ -489,13 +469,59 @@ test('工具：日期不规范被拒', async () => {
       vaultDir: () => join(root, 'nope'),
     })
     const w = tools.find((t) => t.name === 'xiaoyu_diary_write')
-    const out = await w.execute({ text: 'x', date: '2026-13-45' })
+    const out = await w.execute({ 来源: 'private', text: 'x', date: '2026-13-45' })
     assert.equal(out.ok, false)
     assert.ok(out.text.includes('日期格式不对'))
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// 【这条守的是什么】2026-11-03 迟迟在群里评审时点名的第一个问题：
+//   write 不传来源会静默记进私聊，而 search / read / list 都会报错。
+//   同一个参数形状两种行为，最危险的是它不报错 —— 忘记带来源时，
+//   一句群里的闲话就悄悄落进私聊本子，事后还查不出来。
+// 所以这里必须验两件事：
+//   1) 不给来源 → ok:false，且提示里说清楚该写什么；
+//   2) **什么都没写进去** —— 光返回 false 不够，万一它先写后报错也是错的。
+test('工具：write 不传来源必须失败，且不能偷偷写进私聊', async () => {
+  const defineTool = await 造宿主()
+  const root = await mkdtemp(join(tmpdir(), 'xd-nosrc-'))
+  try {
+    const tools = toolsMod.buildTools({
+      defineTool,
+      rootDir: () => root,
+      vaultDir: () => join(root, 'nope'),
+    })
+    const w = tools.find((t) => t.name === 'xiaoyu_diary_write')
+
+    // 1) 参数缺来源：要么被 schema 拦下（抛 INVALID_ARGS），要么走 execute 返回 ok:false。
+    //    两种都算「没记成」，这里都接受 —— 但不接受「记成了」。
+    let 结果 = null
+    try {
+      结果 = await w.execute({ text: '这句不该被记下来' })
+    } catch (e) {
+      assert.match(String(e.code || e.message), /INVALID_ARGS|missing required/i)
+    }
+    if (结果) {
+      assert.equal(结果.ok, false, '不传来源竟然成功了')
+      assert.match(结果.text, /来源/, '失败提示里应该说清楚是来源的问题')
+    }
+
+    // 2) 关键：磁盘上不能凭空多出一条（尤其不能出现在私聊里）
+    const 私聊条目 = await store.读某天(root, 'private', 今天日期()).catch(() => [])
+    const 全部 = 私聊条目.filter((x) => String(x.text || '').includes('这句不该被记下来'))
+    assert.equal(全部.length, 0, '不传来源时居然真的写进私聊了 —— 这正是迟迟说的那个坑')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+/** 今天的 YYYY-MM-DD，跟 tools.js 里的 今天() 同规则。 */
+function 今天日期 () {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 test('工具：xiaoyu_diary_list 汇总天数与条数', async () => {
   const defineTool = await 造宿主()
@@ -506,9 +532,9 @@ test('工具：xiaoyu_diary_list 汇总天数与条数', async () => {
       rootDir: () => root,
       vaultDir: () => join(root, 'nope'),
     })
-    await tools.find((t) => t.name === 'xiaoyu_diary_write').execute({ text: 'a', date: '2026-11-01' })
-    await tools.find((t) => t.name === 'xiaoyu_diary_write').execute({ text: 'b', date: '2026-11-01' })
-    await tools.find((t) => t.name === 'xiaoyu_diary_write').execute({ text: 'c', date: '2026-11-02' })
+    await tools.find((t) => t.name === 'xiaoyu_diary_write').execute({ 来源: 'private', text: 'a', date: '2026-11-01' })
+    await tools.find((t) => t.name === 'xiaoyu_diary_write').execute({ 来源: 'private', text: 'b', date: '2026-11-01' })
+    await tools.find((t) => t.name === 'xiaoyu_diary_write').execute({ 来源: 'private', text: 'c', date: '2026-11-02' })
     const out = await tools.find((t) => t.name === 'xiaoyu_diary_list').execute({ 来源: 'private' })
     assert.equal(out.天数, 2)
     assert.equal(out.总条数, 3)
