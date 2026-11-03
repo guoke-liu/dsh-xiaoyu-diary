@@ -27,7 +27,21 @@ jobs:
       - name: 跑测试
         # ⚠️ 必须带 glob。`node --test test/` 会把目录当模块去 require，
         #    直接 MODULE_NOT_FOUND，看起来像测试全挂了，其实是路径写法问题。
-        run: node --test test/*.test.mjs
+        #
+        # --test-reporter=spec 让失败项带完整堆栈（默认 reporter 在 CI 里会把
+        # 有用的行截掉）。最后那段兜底：万一测试进程非零退出却没有明显的
+        # 失败行，把这些环境信息打出来，省得下一轮又要靠猜。
+        run: |
+          set -o pipefail
+          node --test --test-reporter=spec test/*.test.mjs || {
+            echo "===== 失败诊断 ====="
+            echo "node: $(node --version)"
+            echo "pwd: $(pwd)"
+            echo "host pkg resolvable:"
+            node -e "try{require.resolve('@deepseek-ai/dsh-tools')}catch(e){console.log('  NO:',e.code)}" || true
+            echo "files:"; ls test/
+            exit 1
+          }
 
       - name: 检查插件入口能加载
         # 这里只验「入口形状对不对」，不验业务。
