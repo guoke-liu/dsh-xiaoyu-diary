@@ -28,20 +28,32 @@ jobs:
         # ⚠️ 必须带 glob。`node --test test/` 会把目录当模块去 require，
         #    直接 MODULE_NOT_FOUND，看起来像测试全挂了，其实是路径写法问题。
         #
-        # --test-reporter=spec 让失败项带完整堆栈（默认 reporter 在 CI 里会把
-        # 有用的行截掉）。最后那段兜底：万一测试进程非零退出却没有明显的
-        # 失败行，把这些环境信息打出来，省得下一轮又要靠猜。
+        # 失败时把完整输出写进 job summary（GITHUB_STEP_SUMMARY）。
+        # 为什么：这个仓库的 Actions 日志下载需要 admin 权限，本地又复现不出来，
+        # 只靠 "exit code 1" 根本没法定位。summary 是公开可读的，能直接把
+        # 失败项和堆栈贴出来。
         run: |
-          set -o pipefail
-          node --test --test-reporter=spec test/*.test.mjs || {
-            echo "===== 失败诊断 ====="
-            echo "node: $(node --version)"
-            echo "pwd: $(pwd)"
-            echo "host pkg resolvable:"
-            node -e "try{require.resolve('@deepseek-ai/dsh-tools')}catch(e){console.log('  NO:',e.code)}" || true
-            echo "files:"; ls test/
-            exit 1
-          }
+          set +e
+          node --test --test-reporter=spec test/*.test.mjs > /tmp/testout.txt 2>&1
+          CODE=$?
+          cat /tmp/testout.txt
+          if [ $CODE -ne 0 ]; then
+            {
+              echo "## 测试失败"
+              echo ""
+              echo "- node: $(node --version)"
+              echo "- pwd: $(pwd)"
+              echo ""
+              echo "<details><summary>完整输出</summary>"
+              echo ""
+              echo '```'
+              sed -n '1,400p' /tmp/testout.txt
+              echo '```'
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $CODE
 
       - name: 检查插件入口能加载
         # 这里只验「入口形状对不对」，不验业务。
