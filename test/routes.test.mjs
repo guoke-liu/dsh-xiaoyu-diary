@@ -313,3 +313,35 @@ test('配置错误：父目录都不存在时，报错并说清是哪一级', as
     },
   )
 })
+
+// ── 作者归属：UI 写入路径必须标「主人手记」（2026-11-03）──────────────────
+//
+// 主人原话：「这个功能给主人用不是给鱼的」。
+// UI 上的大模型通道是主人自己按按钮、逐条点「记进日记」的 ——
+// 那是他认可的，必须标 owner；鱼自己整理的才标 xi。两条路不能互相冒充。
+
+test('作者：UI 的 quick-write（主人点「记进日记」）写进去是 owner', async () => {
+  const env = await 造环境()
+  try {
+    const h = await 造宿主(env.root, env.vault)
+    const r = await h.调(`${PREFIX}/quick-write`, {
+      method: 'POST',
+      body: JSON.stringify({ 来源: 'private', date: '2026-11-03', text: '主人自己点头认可的一条', 出处: '大模型' }),
+    })
+    assert.equal(r.status, 200, r.raw)
+    const 条 = (await store.读某天(env.root, 'private', '2026-11-03'))[0]
+    assert.ok(条, '应该写进去一条')
+    assert.equal(条.作者, 'owner', 'UI 上主人点的必须是主人手记')
+  } finally { await env.清理() }
+})
+
+test('作者：鱼自己整理的（xiaoyu_diary_write）默认不是主人', async () => {
+  const env = await 造环境()
+  try {
+    // 直接走 store 写入模拟鱼整理的（不标作者时工具层会补 xi，这里验 store 不会自己塞 owner）
+    await store.追加条目(env.root, 'private', '2026-11-03', { text: '鱼整理的', 作者: 'xi' })
+    const 条 = (await store.读某天(env.root, 'private', '2026-11-03'))[0]
+    assert.equal(条.作者, 'xi')
+    assert.notEqual(条.作者, 'owner')
+  } finally { await env.清理() }
+})
