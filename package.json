@@ -1,0 +1,51 @@
+{
+  "name": "@local/xiaoyu-diary",
+  "version": "0.2.0",
+  "private": true,
+  "description": "小鱼日记：手动记下重要的事 + 每天从记忆仓库聊天里提取候选并由 UI 挑选，支持关键词与标签检索",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "diary",
+    "journal",
+    "memory"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./store": "./lib/store.js",
+    "./search": "./lib/search.js",
+    "./extract": "./lib/extract.js",
+    "./tools": "./lib/tools.js",
+    "./routes": "./lib/routes.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-rc.5": "compatible"
+      }
+    }
+  }
+}

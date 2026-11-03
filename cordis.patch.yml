@@ -1,0 +1,10 @@
+# Patch layer for @local/xiaoyu-diary.
+# 只把本包注册成一个 cordis Loader 条目（id 与 name 都等于包名）。
+# 行为在 lib/index.js 的 apply 里：注册 5 个 diary_* 工具。
+#
+# 可选配置（写在 profile 的 cordis.patch.yml 里覆盖本层）：
+#   rootDir   日记库根目录，默认 ~/.dsh/diary
+#   vaultDir  记忆仓库根目录（只读），默认 ~/.dsh/memory-vault
+- insert:
+    - id: '@local/xiaoyu-diary'
+      name: '@local/xiaoyu-diary'
