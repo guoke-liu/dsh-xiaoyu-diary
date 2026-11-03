@@ -274,13 +274,29 @@ test('提取：渲染带提醒语', () => {
 // ── 工具层完整链（AGENTS.md §3.6.2 四步）────────────────────────────────
 
 /**
- * 找 dsh 运行时里的 dsh-tools。
+ * 找不到真宿主时的替身 defineTool。
+ *
+ * 【为什么需要】CI（GitHub Actions）里没有装 DSH 运行时，`@deepseek-ai/dsh-tools`
+ * 解析不到。而下面这些测试验的主要是**我们自己写的 render 契约** ——
+ * 「render 必须返回内容块数组」是我们代码的责任，不是宿主的。
+ * 拿不到宿主就整批失败，那是测试不可移植，不是插件坏了。
+ *
+ * 替身要**忠实于宿主的可观察行为**（见 AGENTS.md §3.6.2）：
+ *   · 原样保留 spec 的 name / description / parameters / execute / output
+ *   · 不偷偷修 render 返回值，否则就测不出「render 返回裸字符串」这类回归
+ * 真正接宿主的那一步由 DSH 运行时负责，CI 另有一步专门验入口形状。
+ */
+function 替身DefineTool (spec) {
+  return spec
+}
+
+/**
+ * 找 dsh 运行时里的 dsh-tools；找不到就退回替身。
  *
  * 不能写死路径：本机是 /opt/dshapp/runtime/node_modules，云端全局装在
- * /usr/lib/node_modules。写死会让测试在另一台机器上整批失败 ——
- * 那是测试不可移植，不是插件坏了（云端实测踩过一次）。
+ * /usr/lib/node_modules，CI 上两个都没有。
  *
- * 顺序：先按常见安装点找，再退回 require.resolve 让 node 自己找。
+ * @returns {Promise<Function>} defineTool（真宿主优先，拿不到用替身）
  */
 async function 造宿主 () {
   const { createRequire } = await import('node:module')
@@ -306,9 +322,14 @@ async function 造宿主 () {
       if (typeof mod.defineTool === 'function') return mod.defineTool
     }
   }
-  // 最后退回裸包名（插件从自己的父目录链能解析到时才有效）
-  const mod = await import('@deepseek-ai/dsh-tools')
-  return mod.defineTool
+  // 再退回裸包名（插件从自己的父目录链能解析到时才有效）
+  try {
+    const mod = await import('@deepseek-ai/dsh-tools')
+    if (typeof mod.defineTool === 'function') return mod.defineTool
+  } catch {
+    // CI 上没有宿主，落空是正常的 —— 下面用替身
+  }
+  return 替身DefineTool
 }
 
 test('工具：5 个工具全部构造成功', async () => {
