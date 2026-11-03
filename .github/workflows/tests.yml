@@ -1,0 +1,76 @@
+name: tests
+
+# 每次 push 到 main、每个 PR、以及手动触发时，都把全套测试跑一遍。
+# 这就是「更新推送」的守门人：任何一次改动推上来，绿了才算数。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 插件声明 engines.node >= 20。20 是下限，22 是当前主流 LTS。
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 跑测试
+        # ⚠️ 必须带 glob。`node --test test/` 会把目录当模块去 require，
+        #    直接 MODULE_NOT_FOUND，看起来像测试全挂了，其实是路径写法问题。
+        run: node --test test/*.test.mjs
+
+      - name: 检查插件入口能加载
+        # 这里只验「入口形状对不对」，不验业务。
+        # ⚠️ 本插件的 inject 是**数组**（['tools','webServer']），
+        #    不是对象映射 —— 别照抄别的插件的对象写法，否则这里会误报。
+        run: |
+          node -e "
+          import('./lib/index.js').then(m => {
+            if (typeof m.apply !== 'function') throw new Error('index.js 没有导出 apply');
+            if (!Array.isArray(m.inject)) throw new Error('inject 应该是数组，实际是 ' + typeof m.inject);
+            const need = ['tools', 'webServer'];
+            const missing = need.filter(k => !m.inject.includes(k));
+            if (missing.length) throw new Error('inject 缺少必需的宿主服务：' + missing.join(', '));
+            if (typeof m.name !== 'string' || !m.name) throw new Error('缺少 name');
+            console.log('✅ 插件入口正常');
+            console.log('   name   =', m.name);
+            console.log('   inject =', JSON.stringify(m.inject));
+          }).catch(e => { console.error('❌', e.message); process.exit(1); })
+          "
+
+      - name: 检查 6 个工具的 render 都返回内容块数组
+        # 这条是真踩过的坑：宿主会对结果做 content.some(...)，
+        # render 返回裸字符串就会抛 content.some is not a function，
+        # 整次工具调用判失败、模型一个字都拿不到。
+        # 单测全绿也发现不了这个，必须单独验。
+        run: |
+          node -e "
+          (async () => {
+            const { buildTools } = await import('./lib/tools.js');
+            // CI 里没有宿主运行时，defineTool 解析不到。这里传恒等替身，
+            // 取出**原始规格**再验 render —— 验的是我们自己的代码，
+            // 不依赖宿主能不能装上。真正接宿主的那一步由 DSH 运行时负责。
+            const ts = buildTools({ defineTool: (spec) => spec, rootDir: () => '/tmp/x', vaultDir: () => '/tmp/y', log: () => {} });
+            const arr = Array.isArray(ts) ? ts : Object.values(ts);
+            if (arr.length !== 6) throw new Error('应该有 6 个工具，实际 ' + arr.length);
+            for (const t of arr) {
+              if (!t.output || typeof t.output.render !== 'function') throw new Error(t.name + ' 没有 render');
+              const r = t.output.render({}, { text: 'x' });
+              if (!Array.isArray(r)) throw new Error(t.name + ' 的 render 必须返回数组，返回了 ' + typeof r);
+              for (const b of r) {
+                if (!b || typeof b.type !== 'string') throw new Error(t.name + ' 的 render 块缺少 type');
+              }
+            }
+            console.log('✅ 6 个工具的 render 全部合法');
+          })().catch(e => { console.error('❌', e.message); process.exit(1); })
+          "
