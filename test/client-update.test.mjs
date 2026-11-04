@@ -340,3 +340,58 @@ test('UI：版本条 —— 请求走相对路径（不能是 /local/... 绝对�
     assert.ok(u.startsWith('local/xiaoyu-diary/'), `请求地址应以相对路径开头，实际：${u}`)
   }
 })
+
+// ── 「?」帮助面板（2026-11-04 加）────────────────────────────────────────────
+//
+// 为什么要给「说明文字」写测试：它坏了不会报错，只会**静默消失**。
+// 文案被误删、面板接错位置、按钮没接上 onClick —— 全都是界面看起来正常、
+// 用户点开一片空白。人眼很难发现，所以钉成测试。
+
+test('UI：标题行有「?」帮助按钮', async () => {
+  const 环境 = 造React((url) => {
+    if (url.includes('/version')) {
+      return { body: { ok: true, 当前版本: '0.2.0', 检查结果: { ok: true }, 有新版本: false } }
+    }
+    return { body: { ok: true } }
+  })
+  const 导出 = 加载UI(环境.React, 环境.fetch)
+  环境.起实例()
+  const 树 = 导出.Section({})
+  // ⚠️ 这个假 React 不会自动展开函数组件：树里看到的是 { type: 帮助按钮 }，
+  //    不会真正调它。所以先按 type 找到它，再手动调用一次看它产出什么。
+  const 组件 = 找元素(树, (n) => n && typeof n.type === 'function' && n.type.name === '帮助按钮')
+  assert.ok(组件.length > 0, '标题行应该挂上「?」帮助按钮组件')
+  assert.equal(typeof 组件[0].props.onClick, 'function', '「?」按钮必须接上 onClick')
+  // 手动渲染一次，确认它真的产出一个带 aria-label 的按钮（读屏软件要靠它）
+  const 渲染结果 = 组件[0].type(组件[0].props)
+  assert.equal(渲染结果.type, 'button', '帮助按钮应该渲染成 button')
+  assert.equal(渲染结果.props['aria-label'], '使用说明', '帮助按钮需要 aria-label')
+})
+
+test('UI：帮助文案里必须讲清「日记分本」和「花钱只在大模型挑选」', async () => {
+  // 从源码里取文案：这两件事是用户最容易误解的，不许在改文案时删掉。
+  const 源码 = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const 起 = 源码.indexOf('const 帮助内容 = [')
+  assert.ok(起 > 0, 'client.js 里应该有 const 帮助内容 = [')
+  const 止 = 源码.indexOf('];', 起)
+  assert.ok(止 > 起, '帮助内容数组没有正常结束')
+  const 文案 = 源码.slice(起, 止)
+
+  for (const 词 of ['私聊是一本', '互不看', '相互独立', '完全独立']) {
+    if (文案.includes(词)) return
+  }
+  // 没命中就逐个报出缺了哪类信息，别只丢一句 assert 失败
+  assert.fail('帮助文案里应该说明「日记按来源分开」，但找不到相关表述')
+})
+
+test('UI：帮助文案必须说明 token 花费只在模型挑选时段产生', async () => {
+  const 源码 = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const 起 = 源码.indexOf('const 帮助内容 = [')
+  const 止 = 源码.indexOf('];', 起)
+  const 文案 = 源码.slice(起, 止)
+  assert.ok(文案.includes('token'), '帮助文案里应该讲到 token 花费')
+  assert.ok(
+    文案.includes('只有') || 文案.includes('不花'),
+    '帮助文案应该讲清「哪些操作花钱、哪些不花钱」',
+  )
+})
