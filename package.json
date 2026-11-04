@@ -1,6 +1,6 @@
 {
   "name": "@local/xiaoyu-diary",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "小鱼日记：手动记下重要的事 + 每天从记忆仓库聊天里提取候选并由 UI 挑选，支持关键词与标签检索",
   "keywords": [
@@ -22,6 +22,7 @@
     "./client": "./lib/client.js",
     "./store": "./lib/store.js",
     "./search": "./lib/search.js",
+    "./recall": "./lib/recall.js",
     "./extract": "./lib/extract.js",
     "./tools": "./lib/tools.js",
     "./routes": "./lib/routes.js",
