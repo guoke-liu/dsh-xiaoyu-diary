@@ -10,7 +10,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as store from '../lib/store.js'
-import { 注册路由, PREFIX } from '../lib/routes.js'
+import { 注册路由, PREFIX, 归到日记日 } from '../lib/routes.js'
 
 /** 造一个假宿主：收集注册的路由，提供直接调用的入口。 */
 async function 造宿主 (rootDir, vaultDir) {
@@ -346,4 +346,33 @@ test('作者：鱼自己整理的（xiaoyu_diary_write）默认不是主人', as
     assert.equal(条.作者, 'xi')
     assert.notEqual(条.作者, 'owner')
   } finally { await env.清理() }
+})
+
+
+// ── 日记日归属 + 缺来源提示 ────────────────────────────────────────────
+
+test('路由：界面「记一条」按日记日归属（用固定时刻验，不靠跑测试的钟点）', () => {
+  // 为什么不用 new Date()：白天跑测试时日历日和日记日完全相同，
+  // 把 bug 种回去照样全绿 —— 这种假绿比没测更糟（上一轮真的踩过）。
+  assert.equal(归到日记日(new Date('2026-11-04T01:30:00+08:00')), '2026-11-03', '凌晨 1:30 应归前一天')
+  assert.equal(归到日记日(new Date('2026-11-04T09:00:00+08:00')), '2026-11-04', '上午 9:00 应归当天')
+})
+
+test('路由：缺来源时明确说「缺」，别回一句像报错的空参数', async () => {
+  const { 调 } = await 造宿主('/tmp/没有这个目录', '/tmp/也没有这个')
+  const r = await 调(`${PREFIX}/overview`)
+  assert.equal(r.status, 400)
+  assert.equal(r.body.ok, false)
+  assert.ok(!/来源参数不合法：\s*（/.test(r.body.error), `缺来源不该复用「参数不合法」，实际：${r.body.error}`)
+  assert.ok(r.body.error.includes('缺少来源参数'), `要明说缺什么，实际：${r.body.error}`)
+  assert.ok(r.body.error.includes('来源='), `要告诉人怎么补，实际：${r.body.error}`)
+})
+
+test('路由：来源写错时报出写错的原文', async () => {
+  const { 调 } = await 造宿主('/tmp/没有这个目录', '/tmp/也没有这个')
+  const r = await 调(`${PREFIX}/overview`, { query: { 来源: '群聊' } })
+  assert.equal(r.status, 400)
+  assert.equal(r.body.ok, false)
+  assert.ok(r.body.error.includes('群聊'), `要把写错的值回显出来，实际：${r.body.error}`)
+  assert.ok(r.body.error.includes('来源参数不合法'), `写错的值走「不合法」这条，实际：${r.body.error}`)
 })

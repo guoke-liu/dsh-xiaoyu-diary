@@ -597,3 +597,140 @@ test('作者：老条目没有作者字段时不瞎标（空串，不是硬塞�
     await rm(root, { recursive: true, force: true })
   }
 })
+
+
+// ── 跨天连贯 + 输出契约 ────────────────────────────────────────────────
+//
+// 【为什么要「前情」】原先每个工具只认一天，问「上次那事后来怎么定了」，
+//   模型只能靠猜关键词。跨天接得上不该指望模型想办法，工具得递到手上。
+// 【为什么要有契约测试】2026-11-04 线上翻车：search 结果里的 `时间`、read 返回的
+//   `来源` 都没在 output.schema 里声明，宿主 additionalProperties:false 把整次调用
+//   判失败 —— read 从头到尾一次都没成功过。当时全量测试全绿，因为**没有一条**
+//   验过「返回值 vs 声明的 schema」。这里用宿主自己的校验器对拍，不自写规则。
+
+/** 加载宿主的 JSON Schema 校验器；拿不到就跳过（本机可能没装宿主运行时）。 */
+async function 拿宿主机 () {
+  const 候选 = [
+    '/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tools/lib/index.js',
+    '/opt/dshapp/runtime/node_modules/@deepseek-ai/dsh-tools/lib/index.js',
+  ]
+  for (const p of 候选) {
+    try {
+      const m = await import(p)
+      if (typeof m.validateJsonSchemaValue === 'function' && typeof m.defineTool === 'function') return m
+    } catch { /* 换下一个 */ }
+  }
+  return null
+}
+
+test('输出契约：每个工具在成功/失败分支上的返回都符合自己声明的 schema', async () => {
+  const H = await 拿宿主机()
+  if (!H) return // 本机没装宿主运行时，这条跳过
+  const root = await mkdtemp(join(tmpdir(), 'diary-schema-'))
+  await store.追加条目(root, 'private', '2026-11-04', { title: '今天', text: '聊了服务器搬家', tags: ['运维'], at: '2026-11-04T05:00:00.000Z', 来源: '私聊' })
+  await store.追加条目(root, 'private', '2026-11-03', { title: '昨天', text: '聊过别的', tags: [], at: '2026-11-03T05:00:00.000Z', 来源: '私聊' })
+  const tools = toolsMod.buildTools({
+    defineTool: H.defineTool,
+    rootDir: () => root,
+    vaultDir: () => root,
+    config: {},
+  })
+  const 表 = Object.fromEntries(tools.map((t) => [t.name, t]))
+
+  const 用例 = [
+    ['xiaoyu_diary_write', { 来源: 'private', text: '记一条', contextDays: 1 }],
+    ['xiaoyu_diary_write', { 来源: 'private', text: '日期坏了', date: '不是日期' }],
+    ['xiaoyu_diary_write', { 来源: 'private', text: '' }],
+    ['xiaoyu_diary_owner_note', { 来源: 'private', text: '主人手记' }],
+    ['xiaoyu_diary_owner_note', { 来源: 'private', text: '日期坏了', date: '不是日期' }],
+    ['xiaoyu_diary_search', { 来源: 'private', query: '服务器' }],
+    ['xiaoyu_diary_search', { 来源: 'private', query: '完全不存在zzz' }],
+    ['xiaoyu_diary_read', { 来源: 'private', date: '2026-11-04' }],
+    ['xiaoyu_diary_read', { 来源: 'private', date: '坏日期' }],
+    ['xiaoyu_diary_recall', { query: '服务器' }],
+    ['xiaoyu_diary_recall', { query: '完全不存在zzz' }],
+    ['xiaoyu_diary_list', {}],
+  ]
+  for (const [名, 参] of 用例) {
+    const t = 表[名]
+    assert.ok(t, `工具不存在：${名}`)
+    const out = await t.execute(参)
+    const 问题 = H.validateJsonSchemaValue(t.output.schema, out)
+    assert.deepEqual(问题, [], `${名}(${JSON.stringify(参)}) 的返回对不上 schema：${问题.join('；')}`)
+    const blocks = t.output.render(参, out)
+    assert.ok(Array.isArray(blocks) && blocks.every((b) => b && typeof b.type === 'string'),
+      `${名} 的 render 必须返回内容块数组`)
+  }
+})
+
+test('输出契约：search 结果条目里的字段全都在 schema 里声明过', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-schema2-'))
+  await store.追加条目(root, 'private', '2026-11-04', { title: '搬家', text: '服务器搬家了', tags: [], at: '2026-11-04T05:00:00.000Z', 来源: '私聊' })
+  const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+  const t = tools.find((x) => x.name === 'xiaoyu_diary_search')
+  const out = await t.execute({ 来源: 'private', query: '服务器' })
+  assert.ok(out.结果.length > 0, '应该搜到一条')
+  const 声明 = Object.keys(t.output.schema.properties.结果.items.properties)
+  for (const k of Object.keys(out.结果[0])) {
+    assert.ok(声明.includes(k), `结果条目里的 ${k} 没在 schema 声明 —— 宿主会判整次调用失败`)
+  }
+})
+
+test('输出契约：write / owner_note 失败时不返回伪装成成功的空串 id', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-schema3-'))
+  const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+  for (const 名 of ['xiaoyu_diary_write', 'xiaoyu_diary_owner_note']) {
+    const t = tools.find((x) => x.name === 名)
+    const out = await t.execute({ 来源: 'private', text: '' })
+    assert.equal(out.ok, false, `${名} 空内容应该失败`)
+    assert.equal(out.id, null, `${名} 失败时 id 应该是 null，空串会让人以为记成功了`)
+  }
+})
+
+test('前情：write 写完后带回最近几天的条目，contextDays=0 时不带', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-qianqing-'))
+  await store.追加条目(root, 'private', '2026-11-03', { title: '昨天的约定', text: '说好一起看云', tags: [], at: '2026-11-03T05:00:00.000Z', 来源: '私聊' })
+  const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+  const w = tools.find((x) => x.name === 'xiaoyu_diary_write')
+
+  const 带 = await w.execute({ 来源: 'private', text: '今天记一条', date: '2026-11-04' })
+  assert.match(带.text, /这条之前 \d+ 天/, `默认应该带前情，实际：${带.text}`)
+  assert.ok(带.text.includes('昨天的约定'), `前情里应该有昨天那条的标题，实际：${带.text}`)
+
+  const 不带 = await w.execute({ 来源: 'private', text: '今天再记一条', date: '2026-11-04', contextDays: 0 })
+  assert.ok(!/这条之前/.test(不带.text), `contextDays=0 不该带前情，实际：${不带.text}`)
+})
+
+test('前情：search 没命中时也带回前情（不能说一句没找到就完了）', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-qianqing2-'))
+  await store.追加条目(root, 'private', '2026-11-03', { title: '随便记的', text: '那天天气不错', tags: [], at: '2026-11-03T05:00:00.000Z', 来源: '私聊' })
+  const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+  const s = tools.find((x) => x.name === 'xiaoyu_diary_search')
+  const out = await s.execute({ 来源: 'private', query: '完全不存在zzz' })
+  assert.equal(out.找到, false)
+  assert.match(out.text, /最近 \d+ 天的前情/, `没命中也要带前情，实际：${out.text}`)
+})
+
+test('前情：群来源的前情不会混进私聊', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-qianqing3-'))
+  await store.追加条目(root, 'private', '2026-11-03', { title: '私聊的事', text: '私密的', tags: [], at: '2026-11-03T05:00:00.000Z', 来源: '私聊' })
+  await store.追加条目(root, 'group:999', '2026-11-03', { title: '群里的闲聊', text: '公开的', tags: [], at: '2026-11-03T05:00:00.000Z', 来源: '群' })
+  const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+  const w = tools.find((x) => x.name === 'xiaoyu_diary_write')
+  const out = await w.execute({ 来源: 'group:999', text: '群里记一条', date: '2026-11-04' })
+  assert.ok(!out.text.includes('私聊的事'), `群的前情里混进了私聊，实际：${out.text}`)
+  assert.ok(out.text.includes('群里的闲聊'), `群的前情应该有自己的，实际：${out.text}`)
+})
+
+test('read：附前后一天的标题，跨天的事能看出接在哪天', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-linju-'))
+  await store.追加条目(root, 'private', '2026-11-03', { title: '前一天的事', text: 'x', tags: [], at: '2026-11-03T05:00:00.000Z', 来源: '私聊' })
+  await store.追加条目(root, 'private', '2026-11-04', { title: '当天的事', text: 'y', tags: [], at: '2026-11-04T05:00:00.000Z', 来源: '私聊' })
+  await store.追加条目(root, 'private', '2026-11-05', { title: '后一天的事', text: 'z', tags: [], at: '2026-11-05T05:00:00.000Z', 来源: '私聊' })
+  const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+  const r = tools.find((x) => x.name === 'xiaoyu_diary_read')
+  const out = await r.execute({ 来源: 'private', date: '2026-11-04' })
+  assert.ok(out.text.includes('前后一天'), `应该附前后一天，实际：${out.text}`)
+  assert.ok(out.text.includes('前一天的事'), '前一天标题应该在')
+  assert.ok(out.text.includes('后一天的事'), '后一天标题应该在')
+})
