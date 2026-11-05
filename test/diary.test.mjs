@@ -311,7 +311,7 @@ async function 造宿主 () {
   return mod.defineTool
 }
 
-test('工具：7 个工具全部构造成功', async () => {
+test('工具：9 个工具全部构造成功', async () => {
   const defineTool = await 造宿主()
   const root = await 临时库()
   try {
@@ -323,10 +323,11 @@ test('工具：7 个工具全部构造成功', async () => {
     // 数量从 7 改成 8（2026-11-04）：补进 xiaoyu_diary_recall（跨来源检索）。
     // 这个工具在线上跑了一整轮，但代码一直没进仓库 —— 所以这条断言在仓库里
     // 一直是按 7 写的，等于「线上和仓库是两套东西」没人发现。
-    assert.equal(tools.length, 8)
+    // 数量从 8 改成 9（2026-11-05）：新增 xiaoyu_diary_import（导入外部日记）。
+    assert.equal(tools.length, 9)
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
-      ['xiaoyu_diary_extract', 'xiaoyu_diary_list', 'xiaoyu_diary_llm_pick', 'xiaoyu_diary_owner_note', 'xiaoyu_diary_read', 'xiaoyu_diary_recall', 'xiaoyu_diary_search', 'xiaoyu_diary_write'],
+      ['xiaoyu_diary_extract', 'xiaoyu_diary_import', 'xiaoyu_diary_list', 'xiaoyu_diary_llm_pick', 'xiaoyu_diary_owner_note', 'xiaoyu_diary_read', 'xiaoyu_diary_recall', 'xiaoyu_diary_search', 'xiaoyu_diary_write'],
     )
     for (const t of tools) {
       assert.equal(typeof t.execute, 'function')

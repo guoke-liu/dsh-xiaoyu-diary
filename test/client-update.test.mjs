@@ -395,3 +395,50 @@ test('UI：帮助文案必须说明 token 花费只在模型挑选时段产生',
     '帮助文案应该讲清「哪些操作花钱、哪些不花钱」',
   )
 })
+
+
+
+// ── 导入窗口（2026-11-05 新增）────────────────────────────────────────
+// 【为什么只做静态断言】client.js 是浏览器端文件，没有 JSX 也没有 import，
+//   假 React 只能拿到元素树、没法模拟真实点击和文件选择。所以这里守的是
+//   「按钮在不在、说明文字讲没讲清作者归属、请求路径对不对」——
+//   真实的文件选择与上传仍要手工回归（见 README 的「开发」一节）。
+test('UI：标题行有「导入」按钮', async () => {
+  const 环境 = 造React((url) => {
+    if (url.includes('/version')) {
+      return { body: { ok: true, 当前版本: '0.2.0', 检查结果: { ok: true }, 有新版本: false } }
+    }
+    return { body: { ok: true } }
+  })
+  const 导出 = 加载UI(环境.React, 环境.fetch)
+  环境.起实例()
+  const 树 = 导出.Section({})
+  // 假 createElement 把 children 拍平成数组挂在 n.children 上
+  const 按钮们 = 找元素(树, (n) => n && n.type === 'button'
+    && Array.isArray(n.children) && n.children.includes('导入'))
+  assert.ok(按钮们.length > 0, '标题行应该有一个「导入」按钮')
+  assert.equal(typeof 按钮们[0].props.onClick, 'function', '「导入」按钮必须接上 onClick')
+})
+
+test('UI：导入窗口默认不渲染（点了才开）', async () => {
+  const 环境 = 造React(() => ({ body: { ok: true } }))
+  const 导出 = 加载UI(环境.React, 环境.fetch)
+  环境.起实例()
+  const 树 = 导出.Section({})
+  const 组件 = 找元素(树, (n) => n && typeof n.type === 'function' && n.type.name === '导入窗口')
+  assert.equal(组件.length, 0, '导入窗口默认不该渲染，否则一开设置页就糊一层遮罩')
+})
+
+test('UI：导入窗口的说明写清了作者归属（主人要求写在下方那两句）', async () => {
+  const src = readFileSync(CLIENT, 'utf8')
+  // 这两句是主人明确要求写进界面的，删掉或改写都要重新确认
+  assert.match(src, /手动导入的条目会标记为「主人手记」/, '导入窗口必须说明手动导入的归属')
+  assert.match(src, /想标记为鱼的日记，在私聊里让鱼自己写一条/, '导入窗口必须说明怎样才能记成鱼的日记')
+})
+
+test('UI：导入请求走相对路径，且带上来源参数', async () => {
+  const src = readFileSync(CLIENT, 'utf8')
+  // 和 BASE 那条规矩一致：写死绝对路径会在 /dsh/ 前缀下 401
+  assert.ok(!src.includes("post('/local/xiaoyu-diary"), '导入请求不能写死绝对路径')
+  assert.match(src, /post\('\/import\?来源=/, '导入必须带上来源参数（日记按来源完全分开）')
+})
