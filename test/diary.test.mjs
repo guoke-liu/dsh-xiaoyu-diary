@@ -10,6 +10,7 @@ import * as store from '../lib/store.js'
 import * as search from '../lib/search.js'
 import * as extract from '../lib/extract.js'
 import * as toolsMod from '../lib/tools.js'
+import { 日记日, 前推天数, 默认时区, 默认日记日起点小时 } from '../lib/day.js'
 
 /** 建一个临时库目录。 */
 async function 临时库 () {
@@ -704,7 +705,11 @@ test('前情：write 写完后带回最近几天的条目，contextDays=0 时不
 
 test('前情：search 没命中时也带回前情（不能说一句没找到就完了）', async () => {
   const root = await mkdtemp(join(tmpdir(), 'diary-qianqing2-'))
-  await store.追加条目(root, 'private', '2026-11-03', { title: '随便记的', text: '那天天气不错', tags: [], at: '2026-11-03T05:00:00.000Z', 来源: '私聊' })
+  // search 的前情窗口锚在「此刻」（它没有 date 入参），所以这里造的数据必须跟着真实时钟走。
+  // 【踩过的坑】原先写死 '2026-11-03'：11-05 之前窗口（今天往前 2 天）盖得住它，
+  // 到 11-06 窗口滑过 11-03 就变红了 —— 功能没坏，是测试绑死了日期。
+  const 昨天 = 前推天数(日记日(new Date(), { 时区: 默认时区, 起点小时: 默认日记日起点小时 }), 1)
+  await store.追加条目(root, 'private', 昨天, { title: '随便记的', text: '那天天气不错', tags: [], at: `${昨天}T05:00:00.000Z`, 来源: '私聊' })
   const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
   const s = tools.find((x) => x.name === 'xiaoyu_diary_search')
   const out = await s.execute({ 来源: 'private', query: '完全不存在zzz' })
