@@ -90,7 +90,7 @@ systemctl restart dsh-feiyu.service
 | `private` | 私聊 | `private` |
 | `group:730783833` | QQ 群 730783833 | `group-730783833` |
 
-### 9 个工具
+### 11 个工具
 
 ⚠️ **`来源` 参数**：`search` / `read` / `extract` / `llm_pick` 必须传，
 不传会返回一行「缺少来源参数，可选：私聊、群 …」而不是猜一个。
@@ -106,6 +106,8 @@ systemctl restart dsh-feiyu.service
 | `xiaoyu_diary_extract` | 从记忆仓库**某一个来源**当天的聊天里按**规则**初筛候选。只筛不写、不花钱 |
 | `xiaoyu_diary_llm_pick` | 把**某一个来源**当天的聊天交给大模型挑。**花钱、慢**，只在用户明确要求时用。只返回候选，不写日记 |
 | `xiaoyu_diary_import` | 导入外部日记文件（Day One / JSON / JSONL / Markdown / Notion / Obsidian）。**必须指定来源**，条目标成「主人手记」，幂等 |
+| `xiaoyu_diary_update` | 改一条已记下的（按 id）：标题 / 正文 / 标签，或换日期把它挪到另一天。**记错日期就用它挪**，`at` 不动 |
+| `xiaoyu_diary_delete` | 删掉一条记错/记重的（按 id）。**必须传 `确认: true`**，没有回收站 |
 
 ### 两条挑选通道怎么选
 

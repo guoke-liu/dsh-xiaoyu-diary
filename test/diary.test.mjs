@@ -337,7 +337,7 @@ async function 造宿主 () {
   return 替身宿主()
 }
 
-test('工具：9 个工具全部构造成功', async () => {
+test('工具：11 个工具全部构造成功', async () => {
   const defineTool = await 造宿主()
   const root = await 临时库()
   try {
@@ -350,10 +350,11 @@ test('工具：9 个工具全部构造成功', async () => {
     // 这个工具在线上跑了一整轮，但代码一直没进仓库 —— 所以这条断言在仓库里
     // 一直是按 7 写的，等于「线上和仓库是两套东西」没人发现。
     // 数量从 8 改成 9（2026-11-05）：新增 xiaoyu_diary_import（导入外部日记）。
-    assert.equal(tools.length, 9)
+    // 数量从 9 改成 11（2026-11-06）：新增 update / delete（改错、删重）。
+    assert.equal(tools.length, 11)
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
-      ['xiaoyu_diary_extract', 'xiaoyu_diary_import', 'xiaoyu_diary_list', 'xiaoyu_diary_llm_pick', 'xiaoyu_diary_owner_note', 'xiaoyu_diary_read', 'xiaoyu_diary_recall', 'xiaoyu_diary_search', 'xiaoyu_diary_write'],
+      ['xiaoyu_diary_delete', 'xiaoyu_diary_extract', 'xiaoyu_diary_import', 'xiaoyu_diary_list', 'xiaoyu_diary_llm_pick', 'xiaoyu_diary_owner_note', 'xiaoyu_diary_read', 'xiaoyu_diary_recall', 'xiaoyu_diary_search', 'xiaoyu_diary_update', 'xiaoyu_diary_write'],
     )
     for (const t of tools) {
       assert.equal(typeof t.execute, 'function')
@@ -677,6 +678,12 @@ test('输出契约：每个工具在成功/失败分支上的返回都符合自�
     ['xiaoyu_diary_recall', { query: '服务器' }],
     ['xiaoyu_diary_recall', { query: '完全不存在zzz' }],
     ['xiaoyu_diary_list', {}],
+    ['xiaoyu_diary_write', { 来源: 'private', text: '记到未来', date: '2999-01-01' }],
+    ['xiaoyu_diary_update', { 来源: 'private', id: 'private-不存在', text: 'x' }],
+    ['xiaoyu_diary_update', { 来源: 'private', id: '', text: 'x' }],
+    ['xiaoyu_diary_update', { 来源: 'private', id: 'private-d1', text: '' }],
+    ['xiaoyu_diary_delete', { 来源: 'private', id: 'private-d1', 确认: false }],
+    ['xiaoyu_diary_delete', { 来源: 'private', id: 'private-不存在', 确认: true }],
   ]
   for (const [名, 参] of 用例) {
     const t = 表[名]
@@ -764,4 +771,109 @@ test('read：附前后一天的标题，跨天的事能看出接在哪天', asyn
   assert.ok(out.text.includes('前后一天'), `应该附前后一天，实际：${out.text}`)
   assert.ok(out.text.includes('前一天的事'), '前一天标题应该在')
   assert.ok(out.text.includes('后一天的事'), '后一天标题应该在')
+})
+
+// ── 改与删（2026-11-06）──────────────────────────────────────────────────
+//
+// 【为什么补这一组】那天鱼把日期算错，两条落进了前一天的文件里，她发现自己
+//   「挪不了、也删不了」—— 只能等人手工改。日记本必须能自己收拾自己的错。
+// 这组用「昨天/前天」当锚点，不写死具体日期：前一组的时间炸弹就是这么来的。
+
+test('改：改正文、挪日期都能生效，索引跟着动', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-upd-'))
+  const 今天 = 日记日(new Date(), { 时区: 默认时区, 起点小时: 默认日记日起点小时 })
+  const 昨天 = 前推天数(今天, 1)
+  const 前天 = 前推天数(今天, 2)
+  try {
+    const e = await store.追加条目(root, 'private', 前天, { title: '推棋', text: '推到两千', tags: ['2048'], at: new Date().toISOString(), 来源: '私聊' })
+    const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+    const up = tools.find((t) => t.name === 'xiaoyu_diary_update')
+    assert.ok(up, '应该有 xiaoyu_diary_update')
+
+    // 1) 只改正文
+    const r1 = await up.execute({ 来源: 'private', id: e.id, text: '推到两千多，出了 256' })
+    assert.equal(r1.ok, true, r1.text)
+    assert.equal(r1.挪过, false)
+    assert.equal((await store.读某天(root, 'private', 前天))[0].text, '推到两千多，出了 256')
+
+    // 2) 挪到昨天：旧文件里没了、新文件里有，id 不变
+    const r2 = await up.execute({ 来源: 'private', id: e.id, date: 昨天 })
+    assert.equal(r2.ok, true, r2.text)
+    assert.equal(r2.挪过, true)
+    assert.equal(r2.日期, 昨天)
+    assert.equal(r2.旧日期, 前天)
+    assert.equal((await store.读某天(root, 'private', 前天)).length, 0)
+    const 新的 = await store.读某天(root, 'private', 昨天)
+    assert.equal(新的.length, 1)
+    assert.equal(新的[0].id, e.id)
+    assert.equal(新的[0].at, e.at, 'at 是当时写下的时刻，挪日期不能改它')
+
+    // 3) 索引：昨天有、前天没有（不重算的话 search 还会指到旧位置）
+    const idx = await store.读索引(root, 'private')
+    assert.equal(idx.days[昨天]?.count, 1)
+    assert.equal(idx.days[前天]?.count ?? 0, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('改：日期不能挪到未来；找不到 id 要说清楚，别装成功', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-upd2-'))
+  try {
+    const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+    const up = tools.find((t) => t.name === 'xiaoyu_diary_update')
+    const e = await store.追加条目(root, 'private', '2026-11-04', { title: 'x', text: 'y', tags: [], at: '2026-11-04T05:00:00.000Z', 来源: '私聊' })
+    const 未来 = await up.execute({ 来源: 'private', id: e.id, date: '2999-01-01' })
+    assert.equal(未来.ok, false)
+    assert.ok(未来.text.includes('未来'), 未来.text)
+    assert.equal((await store.读某天(root, 'private', '2026-11-04')).length, 1, '被拒的改动不能落盘')
+
+    const 没有 = await up.execute({ 来源: 'private', id: 'private-不存在', text: 'z' })
+    assert.equal(没有.ok, false)
+    assert.ok(没有.text.includes('没找到'), 没有.text)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('删：不传 确认:true 一律不删；确认后条目和索引一起消失', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-del-'))
+  try {
+    const e = await store.追加条目(root, 'private', '2026-11-05', { title: '记重了', text: '同一条', tags: [], at: '2026-11-05T05:00:00.000Z', 来源: '私聊' })
+    const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+    const del = tools.find((t) => t.name === 'xiaoyu_diary_delete')
+    assert.ok(del, '应该有 xiaoyu_diary_delete')
+
+    for (const 确认 of [undefined, false]) {
+      const r = await del.execute({ 来源: 'private', id: e.id, 确认 })
+      assert.equal(r.ok, false, `确认=${确认} 不该删`)
+      assert.equal(r.删除, false)
+      assert.equal((await store.读某天(root, 'private', '2026-11-05')).length, 1, '闸没拦住')
+    }
+
+    const r = await del.execute({ 来源: 'private', id: e.id, 确认: true })
+    assert.equal(r.ok, true, r.text)
+    assert.equal(r.删除, true)
+    assert.equal(r.日期, '2026-11-05')
+    assert.equal((await store.读某天(root, 'private', '2026-11-05')).length, 0)
+    const idx = await store.读索引(root, 'private')
+    assert.equal(idx.days['2026-11-05']?.count ?? 0, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('写：未来日期在写盘前就被拦下（11-06 那次日期算错的那类）', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diary-future-'))
+  try {
+    const tools = toolsMod.buildTools({ defineTool: (x) => x, rootDir: () => root, vaultDir: () => root, config: {} })
+    const w = tools.find((t) => t.name === 'xiaoyu_diary_write')
+    const r = await w.execute({ 来源: 'private', text: '明天的事', date: '2999-01-01' })
+    assert.equal(r.ok, false)
+    assert.equal(r.id, null)
+    assert.ok(r.text.includes('未来'), r.text)
+    assert.ok((await store.列出日期(root, 'private')).length === 0, '被拦下的不该建出文件')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
