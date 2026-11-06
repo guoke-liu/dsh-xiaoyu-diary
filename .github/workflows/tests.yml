@@ -74,7 +74,7 @@ jobs:
           }).catch(e => { console.error('❌', e.message); process.exit(1); })
           "
 
-      - name: 检查 6 个工具的 render 都返回内容块数组
+      - name: 检查每个工具的 render 都返回内容块数组
         # 这条是真踩过的坑：宿主会对结果做 content.some(...)，
         # render 返回裸字符串就会抛 content.some is not a function，
         # 整次工具调用判失败、模型一个字都拿不到。
@@ -88,7 +88,12 @@ jobs:
             // 不依赖宿主能不能装上。真正接宿主的那一步由 DSH 运行时负责。
             const ts = buildTools({ defineTool: (spec) => spec, rootDir: () => '/tmp/x', vaultDir: () => '/tmp/y', log: () => {} });
             const arr = Array.isArray(ts) ? ts : Object.values(ts);
-            if (arr.length !== 6) throw new Error('应该有 6 个工具，实际 ' + arr.length);
+            // ⚠️ 不写死工具数量：2026-11-05 加了第 9 个工具（import），
+            //    这里还写着 6，等测试修绿后这一步必红。数量只打印，不断言。
+            if (arr.length === 0) throw new Error('buildTools 一个工具都没返回');
+            const 名字们 = arr.map((t) => t && t.name).filter(Boolean);
+            if (名字们.length !== arr.length) throw new Error('有工具没有 name');
+            if (new Set(名字们).size !== 名字们.length) throw new Error('工具名重复：' + 名字们.join(', '));
             for (const t of arr) {
               if (!t.output || typeof t.output.render !== 'function') throw new Error(t.name + ' 没有 render');
               const r = t.output.render({}, { text: 'x' });
@@ -97,6 +102,7 @@ jobs:
                 if (!b || typeof b.type !== 'string') throw new Error(t.name + ' 的 render 块缺少 type');
               }
             }
-            console.log('✅ 6 个工具的 render 全部合法');
+            console.log('✅ ' + arr.length + ' 个工具的 render 全部合法');
+            console.log('   ' + 名字们.join(' '));
           })().catch(e => { console.error('❌', e.message); process.exit(1); })
           "

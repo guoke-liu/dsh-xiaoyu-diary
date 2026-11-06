@@ -281,8 +281,29 @@ test('提取：渲染带提醒语', () => {
  * /usr/lib/node_modules。写死会让测试在另一台机器上整批失败 ——
  * 那是测试不可移植，不是插件坏了（云端实测踩过一次）。
  *
- * 顺序：先按常见安装点找，再退回 require.resolve 让 node 自己找。
+ * 顺序：先按常见安装点找，再退回裸包名；一处都找不到时用替身（见 替身宿主）。
  */
+
+/**
+ * 拿不到宿主运行时时的替身定义器（CI 上走的就是这条路）。
+ *
+ * 【为什么必须有】GitHub 的 runner 是干净机器：没有 /opt/dshapp，也没有全局 dsh。
+ *   以前这里最后一手是 `await import('@deepseek-ai/dsh-tools')`，找不到就把
+ *   ERR_MODULE_NOT_FOUND 抛给用例 —— 2026-11-04 起 CI 一直是 12 条红，
+ *   本地却次次全绿，因为这台开发机真装了运行时。**本地绿是环境给的，不是代码给的。**
+ *   替身只做一件事：把规格原样交回去，用例验的仍然是我们自己的代码。
+ *   「真宿主能不能接上」不在这里证明 —— 那是 lib/index.js 运行时的事，
+ *   再由 `拿宿主机()` 那条对拍测试覆盖（有宿主时才跑）。
+ */
+function 替身宿主 () {
+  return (spec) => {
+    if (!spec || typeof spec.name !== 'string') {
+      throw new Error('defineTool 收到的规格没有 name —— 这是插件代码的问题，不是环境问题')
+    }
+    return spec
+  }
+}
+
 async function 造宿主 () {
   const { createRequire } = await import('node:module')
   const { existsSync } = await import('node:fs')
@@ -307,9 +328,13 @@ async function 造宿主 () {
       if (typeof mod.defineTool === 'function') return mod.defineTool
     }
   }
-  // 最后退回裸包名（插件从自己的父目录链能解析到时才有效）
-  const mod = await import('@deepseek-ai/dsh-tools')
-  return mod.defineTool
+  // 最后退回裸包名（插件从自己的父目录链能解析到时才有效）；
+  // 干净机器上解析不到 —— 退替身，绝不让整批用例跟着红。
+  try {
+    const mod = await import('@deepseek-ai/dsh-tools')
+    if (typeof mod.defineTool === 'function') return mod.defineTool
+  } catch { /* 没有运行时，走替身 */ }
+  return 替身宿主()
 }
 
 test('工具：9 个工具全部构造成功', async () => {
