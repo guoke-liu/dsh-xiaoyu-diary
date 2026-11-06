@@ -1,6 +1,6 @@
 {
   "name": "@local/xiaoyu-diary",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "小鱼日记：手动记下重要的事 + 每天从记忆仓库聊天里提取候选并由 UI 挑选，支持关键词与标签检索，可导入 Day One / Notion / Obsidian / Markdown 等外部日记",
   "keywords": [

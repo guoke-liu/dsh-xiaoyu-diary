@@ -28,6 +28,31 @@
 
 ## 安装
 
+**一条命令（Windows / macOS / Linux 通用）**：
+
+```bash
+git clone https://github.com/guoke-liu/dsh-xiaoyu-diary.git && cd dsh-xiaoyu-diary
+node install.mjs            # 自动找唯一的 profile；多个就指定：node install.mjs 我的profile
+node install.mjs --dry      # 只看要做什么，不落盘
+```
+
+`install.sh` 是同一个东西的壳（需要 bash），`node install.mjs` 在 Windows 上也能直接跑。
+
+它做四件事：加 `link:` 依赖 → 写 `dsh.profile.bundles` → `dsh plugin install` → 用 `--dump-config`
+验收「注册条目 = 1、`skipping` = 0」。
+
+**首次安装最常见的三个问题，先说在前面：**
+
+| 现象 | 真实情况 |
+|---|---|
+| 装完提示你重启，重启后**当前会话断了**、显示「任务已停止」 | 预期行为。DSH 重启会换 token、旧会话结束。**让人手动重启**，别让 agent 在同一轮里「重启 + 等结果」——它等的那个进程就是被重启的 |
+| 不知道日记目录要不要先建 | **不用**。目录是第一次写入时自动建的（`备好目录()` 懒创建）；读不到只是返回空 |
+| 装完设置页看不到区块 | 九成是没重启，或 `dsh.profile.bundles` 里没加上。跑一次 `node install.mjs --dry` 对照计划，再 `dsh --profile <名字> --dump-config` 搜包名，应该恰好 1 条 |
+
+---
+
+### 我们自己的机器怎么装（参考）
+
 插件包根目录是 `plugin/`（含 `package.json` 的那一层），不是外层目录。
 
 ### 本机（web profile）
@@ -71,6 +96,17 @@ corepack pnpm install --prefer-offline
 
 ```bash
 systemctl restart dsh-feiyu.service
+```
+
+### 装完的自检
+
+```bash
+# 1) 配置树里恰好 1 条、没有 skipping（install.mjs 已经替你跑过一遍）
+dsh --profile <你的profile> --dump-config | grep -c "id: '@local/xiaoyu-diary'"
+dsh --profile <你的profile> --dump-config | grep -c "skipping profile bundle"
+
+# 2) 重启之后探活（不用重启也能跑，它只是确认服务活着）
+curl -s http://127.0.0.1:<端口>/local/xiaoyu-diary/ping
 ```
 
 ## 使用
